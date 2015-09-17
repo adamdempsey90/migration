@@ -61,9 +61,9 @@ class Field():
         self.kappa2 = self.grad(self.r**4 * self.omega2)/self.r**3
 
     def set_omega(self):
-        l = self.r*self.grad(self.sigma)/self.sigma
+        l = -self.r*self.grad(self.sigma)/self.sigma
         self.omegap2 = -(self.k+l)*self.c2/self.r**2
-        self.omega2 =  self.omk + self.omegap2
+        self.omega2 =  self.omk2 + self.omegap2
         self.omega = sqrt(self.omega2)
 
     def set_all(self,sigma):
@@ -82,14 +82,23 @@ class Simulation():
 
 
 
-    def __init__(self,x=linspace(-4,4,200),k=1,l=0,hor=.07,alpha=1e-3,a=1,mp=3e-6,mud=1,integrator='quad',solver='rk4'):
+    def __init__(self,x=linspace(-4,4,200),k=1,l=0,hor=.07,alpha=1e-3,a=1,mp=3e-6,mud=1,integrator='quad',solver='rk4',softening=None,steady_state=False,calc_lr=True):
         self.fld = Field(x*hor + a ,k,l,hor,alpha,a,mp,mud)
+        self.calc_lr= calc_lr
         self.integrator = integrator
         self.solver = solver
+        self.softening = softening
         self.set_integrator(integrator)
         self.set_solver(solver)
         self.dt = 1
         self.set_vr(self.fld.sigma)
+        if steady_state:
+            self.steadystate=True
+            self.solver = 'steady_state'
+            self.set_solver(self.solver)
+        else:
+            self.steadystate = False
+
 
     def set_integrator(self,integrator):
         self.integrate = self.intdict[integrator]
@@ -99,47 +108,59 @@ class Simulation():
                 'rk4':self.take_step_rk4,
                 'crank':self.take_step_crank_nicholson,
                 'feuler':self.take_step_forward_euler,
-                'beuler':self.take_step_backward_euler}
-        self.take_step =solvedict[solver]
+                'beuler':self.take_step_backward_euler,
+                'steady_state':self.take_step_inf}
+
+        self.take_step = solvedict[solver]
 
     def laplace(self):
         x = self.fld.r/self.fld.a
 
         b = zeros(x.shape)
         db = zeros(x.shape)
-        psi = zeros(x.shape)
+        mpsi = zeros(x.shape)
+
+        if self.softening != None:
+            rs = self.softening
+        else:
+            rs = 0
 
         for i,(a,m) in enumerate(zip(x,self.fld.m)):
-            lfunc = lambda x: cos(m*x)/sqrt(1-2*a*cos(x)+a*a)
-            dlfunc = lambda x: cos(m*x)*(cos(x)-a) * (1-2*a*cos(x)+a*a)**(-1.5)
-            ans = 2*self.integrate(lfunc,0,pi)
+            lfunc = lambda x: cos(m*x)/sqrt(1-2*a*cos(x)+a*a+rs*rs)
+            dlfunc = lambda x: cos(m*x)*(cos(x)-a) * (1-2*a*cos(x)+a*a+rs*rs)**(-1.5)
+            ans = 2*self.integrate(lfunc,0,pi)/pi
             if type(ans) == tuple or type(ans) == list or type(ans) == ndarray:
                 ans = ans[0]
             b[i] = ans
-            ans = 2*self.integrate(dlfunc,0,pi)
+            ans = 2*self.integrate(dlfunc,0,pi)/pi
             if type(ans) == tuple or type(ans) == list or type(ans) == ndarray:
                 ans = ans[0]
             db[i] = ans
-            if m > 0:
-                psi[i] = .5*pi*(abs(db[i])/m + 2*sqrt(1+self.fld.xi[i]**2)*b[i])
-            else:
-                psi[i] = 0
+            mpsi[i] = .5*pi*(abs(db[i]) + 2*sqrt(1+self.fld.xi[i]**2)*m*b[i])
+
 
         self.lap = b
         self.dlap = db
-        self.psi = psi
+        self.mpsi = mpsi
 
 
     def set_torques(self):
-        self.laplace()
 
-        Tnorm = self.fld.mp**2 * self.fld.mud * (self.fld.a*self.fld.oms)**2 / (self.fld.hor**3)
+        if self.calc_lr:
+            self.laplace()
 
-        val = Tnorm * (2*self.fld.sigma*self.fld.a**2/self.fld.mud)*self.fld.hor**3 * self.fld.m**4 * self.psi**2
-        val *= (self.fld.oms**2/self.fld.kappa2)
-        val /= (self.fld.r*(1 + 4*self.fld.xi**2))
+            eps = array([-1 if r<self.fld.a else 1 for r in self.fld.r])
 
-        self.dTr = array([ v if r>=self.fld.a else -v for r,v in zip(self.fld.r,val)])
+            self.Tnorm = self.fld.mp**2 * self.fld.mud * (self.fld.a*self.fld.oms)**2 / (self.fld.hor**3)
+
+            val = self.Tnorm * (2*self.fld.sigma*self.fld.a**2/self.fld.mud)*self.fld.hor**3 * self.fld.m**2 * self.mpsi**2
+            val *= eps*(self.fld.oms**2/self.fld.kappa2)
+            val /= (self.fld.r*(1 + 4*self.fld.xi**2))
+
+            self.dTr = val
+        else:
+            self.dTr = zeros(self.fld.r.shape)
+            self.Tnorm = ones(self.fld.r.shape)
 
         g = 3*pi*self.fld.nu*self.fld.r**2 * self.fld.omk * self.fld.sigma
 
@@ -155,19 +176,23 @@ class Simulation():
 
     def calc_rhs(self,sigma):
         self.set_vr(sigma)
-        rhs = -self.fld.grad(self.fld.r*self.vr*self.fld.sigma)/self.fld.r
+        self.set_vs()
+        ds = self.fld.grad(sigma)
+        rhs = ds*self.fld.vs-self.fld.grad(self.fld.r*self.vr*self.fld.sigma)/self.fld.r
         return rhs
 
-    def move_planet(self):
+    def set_vs(self):
         norm = -2/(self.fld.mp*self.fld.a*self.fld.oms)
         self.fld.vs = trapz(self.dTr,x=self.fld.r)*norm
+    def move_planet(self):
+        self.calc_vs()
         self.fld.a += self.dt * self.fld.vs
 
     def take_step_forward_euler(self,dt=None):
         if dt != None:
             self.set_dt(dt)
         self.fld.sigma += self.dt*self.calc_rhs(self.fld.sigma)
-        self.move_planet()
+#        self.move_planet()
 
     def take_step_backward_euler(self,dt=None):
         if dt != None:
@@ -177,7 +202,7 @@ class Simulation():
         f0 = self.fld.sigma + self.dt*self.calc_rhs(self.fld.sigma)
 
         self.fld.sigma = fsolve( lambda x: x - sig0 - dt*self.calc_rhs(x),f0)
-        self.move_planet()
+#        self.move_planet()
 
     def take_step_rk2(self,dt=None):
         if dt != None:
@@ -187,7 +212,7 @@ class Simulation():
         k1 = self.calc_rhs(sig0)
         k2 = self.calc_rhs(sig0 + .5*self.dt*k1)
         self.fld.sigma = sig0 + k2
-        self.move_planet()
+#        self.move_planet()
 
     def take_step_rk4(self,dt=None):
         if dt != None:
@@ -199,7 +224,7 @@ class Simulation():
         k4 = self.calc_rhs(sig0 + self.dt*k3)
 
         self.fld.sigma = sig0 + (self.dt/6)*(k1+2*(k2+k3)+k4)
-        self.move_planet()
+#        self.move_planet()
 
     def take_step_crank_nicholson(self,dt=None):
         if dt != None:
@@ -207,8 +232,12 @@ class Simulation():
 
         f0 = self.fld.sigma + .5*self.dt*self.calc_rhs(self.fld.sigma)
 
-        self.fld.sigma = fsolve( lambda x: x- (f0 + .5*dt*self.calc_rhs(x)),f0)
-        self.move_planet()
+        self.fld.sigma = fsolve( lambda x: x- (f0 + .5*self.dt*self.calc_rhs(x)),f0)
+#        self.move_planet()
+
+    def take_step_inf(self):
+            f0 = self.fld.sigma
+            self.fld.sigma = fsolve(lambda x: self.calc_rhs(x),f0)
 
     def evolve(self,times,dt):
         self.dt = dt
@@ -227,7 +256,7 @@ class Simulation():
         step_count = 0
         end_flag=False
         for i,end_t in enumerate(times[1:],start=1):
-            while current_t < end_t and step_count < self.max_steps:
+            while current_t < end_t and step_count < self.max_steps and end_flag==False:
                 if current_t + self.dt > end_t:
                     self.dt = end_t - current_t
                     self.take_step()
@@ -241,6 +270,9 @@ class Simulation():
                 if step_count > self.max_steps:
                     'Print Exceeded number of substeps'
                     end_flag = True
+                if nan in self.fld.sigma or self.fld.vs==nan:
+                    'Print NaN detected, exiting.'
+                    end_flag = True
 
             print 'Saving at t=%f' % current_t
 
@@ -248,7 +280,7 @@ class Simulation():
             status.a[i] = self.fld.a
             status.vs[i] = self.fld.vs
             status.vr[:,i] = self.vr
-            status.dTr[:,0] = self.dTr
+            status.dTr[:,i] = self.dTr
 
             if end_flag:
                 return status
