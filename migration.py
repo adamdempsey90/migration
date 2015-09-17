@@ -8,6 +8,7 @@ class Status():
     def __init__(self,t,r,nr,nt):
         self.sigma = zeros((nr,nt))
         self.vr = zeros(self.sigma.shape)
+        self.dTr = zeros(self.sigma.shape)
         self.a = zeros(t.shape)
         self.vs = zeros(t.shape)
         self.t = t
@@ -88,6 +89,7 @@ class Simulation():
         self.set_integrator(integrator)
         self.set_solver(solver)
         self.dt = 1
+        self.set_vr(self.fld.sigma)
 
     def set_integrator(self,integrator):
         self.integrate = self.intdict[integrator]
@@ -219,6 +221,7 @@ class Simulation():
         status.a[0] = self.fld.a
         status.vs[0] = self.fld.vs
         status.vr[:,0] = zeros(self.fld.sigma.shape)
+        status.dTr[:,0] = self.dTr
 
         current_t = times[0]
         step_count = 0
@@ -244,7 +247,8 @@ class Simulation():
             status.sigma[:,i] = self.fld.sigma
             status.a[i] = self.fld.a
             status.vs[i] = self.fld.vs
-            status.vr[:,i] = zeros(self.fld.sigma.shape)
+            status.vr[:,i] = self.vr
+            status.dTr[:,0] = self.dTr
 
             if end_flag:
                 return status
