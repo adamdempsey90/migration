@@ -1,6 +1,7 @@
 from numpy import *
 from scipy.optimize import fsolve
 from scipy import integrate
+from scipy.special import kn as besselk
 from matplotlib.pyplot import *
 
 
@@ -12,51 +13,84 @@ class Status():
         self.a = zeros(t.shape)
         self.vs = zeros(t.shape)
         self.t = t
-        self.r = r
+        self.r = zeros(self.sigma.shape)
+        self.r[:,0] = r
 
     def animate(self,q='sigma',tend=None):
         qvals={'sigma':self.sigma,
                 'vr':self.vr,
                 'dTr':self.dTr}
 
-        if tend == None:
-            tend = self.t[-1]
+        # if follow_planet:
+        #     xstr = '$r-v_s t$'
+        # else:
+        xstr = '$r$'
+
         if q not in qvals.keys():
             q = 'sigma'
         dat = qvals[q]
 
+        if tend == None:
+            tend = self.t[-1]
+
+        dat = dat[:,self.t<=tend]
+        tvals = self.t[self.t <= tend]
+        avals = self.a[self.t<=tend]
+
+#        rvals = self.r[:,self.t<=tend]
+        rvals = self.r[:,0]
+        yval = dat[:,0][rvals>=1][0]
+
         fig=figure();
         ax=fig.add_subplot(111)
-        line,=ax.plot(self.r,dat[:,0])
+        line,=ax.plot(rvals,dat[:,0])
+        linep, = ax.plot(avals[0],yval,'o',markersize=20)
+        ax.set_xlabel(xstr,fontsize=20)
 
         if q == 'sigma':
             ax.set_ylim(dat[dat>0].min(),dat[dat>0].max())
         else:
             ax.set_ylim(dat.min(),dat.max())
 
-        for i,t in enumerate(self.t[self.t<=tend]):
+        for i,t in enumerate(tvals):
             line.set_ydata(dat[:,i])
+            linep.set_xdata(avals[i])
+            # if not follow_planet:
+            #     line.set_xdata(rvals[:,i])
+            ax.set_title('t = %.2f'%t,fontsize=20)
             fig.canvas.draw()
 
 
 class Field():
+    self.dcoeffs = array([-1./12, -2./3, 0, 2./3, -1./12])
+    self.dinds = array([-2,-1,0,1,2])
+    self.ng = 2
+
+
     def __init__(self,r,k,l,hor,alpha,a,mp,mud):
         self.r = r
+        self.nr = len(self.r)
+        self.inds = range(self.ng,self.nr-self.nr)
         self.dr = diff(r)[0]
-        self.omk = r**(-1.5)
+        self.omk = r[self.inds]**(-1.5)
         self.omk2 = self.omk**2
         self.hor = hor
         self.mud = mud
-        self.c2 = hor**2 * r**(-k)
-        self.sigma = (mud/(a*a*pi))*r**(-l)
+        self.c2 = hor**2 * r[self.inds]**(-k)
+        self.nu = alpha * hor**2 * self.r**(-k+1.5)
+
+        self.sigma = (mud/(3*pi*self.nu))#(mud/(a*a*pi))*r**(-l)
+        self.vr = -1.5*self.nu/self.r
+        self.mdot = self.r*self.sigma * self.vr * -2*pi
         self.sig0 = copy(self.sigma)
-        self.mdisk = trapz(self.sigma*self.r,x=self.r)*2*pi
+        self.mdisk = trapz(self.sigma*self.r,x=self.r[self.])*2*pi
         self.k = k
         self.l = l
+        self.f = (-k+1)/2
+        self.H = hor * r**(self.f)
         self.omegap2 = -(k+l)*self.c2/r**2
         self.omega2 = self.omegap2 + self.omk2
         self.omega = sqrt(self.omega2)
-        self.nu = alpha*self.c2/self.omk
         self.dr = diff(self.r)[0]
         self.a = a
         self.mp = mp
@@ -67,10 +101,14 @@ class Field():
 
 
     def grad(self,q):
-         dq = zeros(q.shape)
-         dq[1:-1] = .5*(q[2:]-q[:-2])
-         dq[0] = -1.5*q[0] + 2*q[1] - .5*q[2]
-         dq[-1] = 1.5*q[-1] - 2*q[-2] +.5*q[-3]
+
+         dq = array([ sum([c*q[i+j] for c,j in zip(self.dcoeffs,self.dinds) ]) for i in self.inds])
+
+
+#        dq = zeros(q.shape)
+#         dq[1:-1]= .5*(q[2:]-q[:-2])
+#         dq[0] = -1.5*q[0] + 2*q[1] - .5*q[2]
+#         dq[-1] = 1.5*q[-1] - 2*q[-2] +.5*q[-3]
          return dq/self.dr
     def grad2(self,q):
          d2q = zeros(q.shape)
@@ -88,7 +126,7 @@ class Field():
         self.kappa2 = self.grad(self.r**4 * self.omega2)/self.r**3
 
     def set_omega(self):
-        l = -self.r*self.grad(self.sigma)/self.sigma
+        l = -self.r*self.grad(self.sigma)/self.sigma[self.inds]
         self.omegap2 = -(self.k+l)*self.c2/self.r**2
         self.omega2 =  self.omk2 + self.omegap2
         self.omega = sqrt(self.omega2)
@@ -107,15 +145,17 @@ class Simulation():
 
 
 
-    def __init__(self,x=linspace(-4,4,200),k=1,l=0,hor=.07,alpha=1e-3,a=1,mp=3e-6,mud=1,integrator='quad',solver='rk4',softening=None,steady_state=False,calc_lr=True,fixed_torque=False,smoothed=True,nsmooth=20):
+    def __init__(self,x=linspace(-4,4,200),k=1,l=0,hor=.07,alpha=1e-3,a=1,mp=3e-6,mud=1,integrator='quad',solver='rk4',softening=None,steady_state=False,calc_lr=True,fixed_torque=False,fixed_planet=False,smoothed=True,nsmooth=20,approx_laplace=True):
         self.fld = Field(x*hor + a ,k,l,hor,alpha,a,mp,mud)
         self.calc_lr = calc_lr
+        self.approx_laplace = approx_laplace
         self.integrator = integrator
         self.solver = solver
         self.softening = softening
         self.set_integrator(integrator)
         self.set_solver(solver)
         self.fixed_torque = fixed_torque
+        self.fixed_planet = fixed_planet
         self.smoothed = smoothed
         self.nsmooth = nsmooth
         self.dt = 1
@@ -150,29 +190,46 @@ class Simulation():
     def laplace(self):
         x = self.fld.r/self.fld.a
 
-        b = zeros(x.shape)
-        db = zeros(x.shape)
-        mpsi = zeros(x.shape)
+
 
         if self.softening != None:
             rs = self.softening
         else:
             rs = 0
 
-        for i,(a,m) in enumerate(zip(x,self.fld.m)):
-            lfunc = lambda x: cos(m*x)/sqrt(1-2*a*cos(x)+a*a+rs*rs)
-            dlfunc = lambda x: cos(m*x)*(cos(x)-a) * (1-2*a*cos(x)+a*a+rs*rs)**(-1.5)
-            ans = self.integrate(lfunc,0,pi)
-            if type(ans) == tuple or type(ans) == list or type(ans) == ndarray:
-                ans = ans[0]*2/pi
-            b[i] = ans*2/pi
-            ans = self.integrate(dlfunc,0,pi)
-            if type(ans) == tuple or type(ans) == list or type(ans) == ndarray:
-                ans = ans[0]*2/pi
-            db[i] = ans*2/pi
-            mpsi[i] = .5*pi*(abs(db[i]) + 2*sqrt(1+self.fld.xi[i]**2)*m*b[i])
+        if not self.approx_laplace:
+            b = zeros(x.shape)
+            db = zeros(x.shape)
+            mpsi = zeros(x.shape)
+            for i,(a,m) in enumerate(zip(x,self.fld.m)):
+                lfunc = lambda x: cos(m*x)/sqrt(1-2*a*cos(x)+a*a+rs*rs)
+                dlfunc = lambda x: cos(m*x)*(cos(x)-a) * (1-2*a*cos(x)+a*a+rs*rs)**(-1.5)
+                ans = self.integrate(lfunc,0,pi)
+                if type(ans) == tuple or type(ans) == list or type(ans) == ndarray:
+                    ans = ans[0]*2/pi
+                b[i] = ans*2/pi
+                ans = self.integrate(dlfunc,0,pi)
+                if type(ans) == tuple or type(ans) == list or type(ans) == ndarray:
+                    ans = ans[0]*2/pi
+                db[i] = ans*2/pi
+                mpsi[i] = .5*pi*(abs(db[i]) + 2*sqrt(1+self.fld.xi[i]**2)*m*b[i])
+            bess_arg = zeros(self.fld.r.shape)
+            k0 = zeros(self.fld.r.shape)
+            k1 = zeros(self.fld.r.shape)
+        else:
+            bess_arg = self.fld.m*sqrt(x -2 +1/x + rs**2 * self.fld.H**2 /(x*self.fld.a**2))
+            zero_arg = bess_arg != 0
+            k0 = array([ besselk(0,bessi) if za else 0 for bessi,za in zip(bess_arg,zero_arg)])
+            k1 = array([ besselk(1,bessi) if za else 0 for bessi,za in zip(bess_arg,zero_arg)])
 
+            b = (2/pi) * x**(-.5) * k0
+            dh = (2*self.fld.f - 1)*(self.fld.H/self.fld.r)**2
+            db = -b/(2*x) - self.fld.m*k1/(pi*sqrt((x-1)**2 + (self.fld.H/self.fld.a)**2))*(1-x**(-2) + dh)
+            mpsi = .5*pi*(abs(db) + 2*sqrt(1+self.fld.xi**2)*self.fld.m*b)
 
+        self.bess_arg = bess_arg
+        self.k0 = k0
+        self.k1 = k1
         self.lap = b
         self.dlap = db
         self.mpsi = mpsi
@@ -201,30 +258,39 @@ class Simulation():
             self.Tnorm = ones(self.fld.r.shape)
 
 
+    def set_vr(self,sigma=None):
+        if sigma==None:
+            sigma = self.fld.sigma
 
-    def set_vr(self):
-        g = 3*pi*self.fld.nu*self.fld.r**2 * self.fld.omk * self.fld.sigma
-        self.dGr = -self.fld.grad(g)
-        self.vr = (self.dGr + self.fld.sigma*self.dTr)/(2*pi*self.fld.r**2 * self.fld.sigma*self.fld.omk)
+        self.dGg = -3*pi*self.fld.nu*sqrt(self.fld.r) *( self.fld.grad(sigma) + sigma*(2 - self.fld.k) )
+        self.vr = (self.dGr + sigma*self.dTr)/(2*pi*self.fld.r**2 * sigma*self.fld.omk)
+
+        self.vr[:self.fld.ng] = ones((self.fld.ng,))*self.vr[self.fld.ng]
+        self.vr[-self.fld.ng:] = -1.5 * self.nu[-self.fld.ng:]/self.fld.r[-self.fld.ng:]
+
 
     def set_dt(self,dt):
         self.dt = dt
 
     def calc_rhs(self,sigma):
-        if not self.fixed_torque:
+#        ds = self.fld.grad(sigma)
+        if self.fixed_torque:
+            self.fld.sigma = sigma
+            self.set_vs(sigma)
+        else:
             self.fld.set_all(sigma)
             self.set_torques()
-            self.set_vs()
-        else:
-            self.fld.sigma = sigma
-        self.set_vr()
+            self.set_vs(sigma)
 
-        ds = self.fld.grad(sigma)
-        rhs = ds*self.fld.vs-self.fld.grad(self.fld.r*self.vr*self.fld.sigma)/self.fld.r
+        self.set_vr(sigma)
+
+#ds*self.fld.vs
+        rhs = -self.fld.grad(self.fld.r*self.vr*sigma)/self.fld.r
 
         return rhs
 
-    def set_bc(self,sigma):
+    def set_bc(self,sigma,t):
+
         # Zero gradient
         #sigma[0] =  (2*sigma[1] - .5*sigma[2])/1.5
 
@@ -234,14 +300,23 @@ class Simulation():
         # sigma[-1] /= (2*pi*self.fld.r[-1])
 #        sigma[0] = self.fld.sig0[0]
 #        sigma[-1] = self.fld.sig0[-1]
+
+        sigma[:self.fld.ng] = sigma[self.fld.ng] * self.fld.r[self.fld.ng]/self.fld.r[:self.fld.ng]
+        sigma[-self.fld.ng:] = mdot_func(t)/(3*pi*self.nu[-self.fld.ng:])
+
         return sigma
 
-    def set_vs(self):
+    def set_vs(self,sigma=None):
+        if sigma==None:
+            sigma = self.fld.sigma
+
         norm = -2/(self.fld.mp*self.fld.a*self.fld.oms)
-        self.fld.vs = integrate.simps(self.fld.sigma*self.dTr,x=self.fld.r)*norm
+        self.fld.vs = integrate.simps(sigma*self.dTr,x=self.fld.r)*norm
     def move_planet(self):
-        self.calc_vs()
-        self.fld.a += self.dt * self.fld.vs
+#        self.calc_vs()
+        if not self.fixed_planet:
+            self.fld.a += self.dt * self.fld.vs
+            self.fld.oms = self.fld.a**(-1.5)
 
     def take_step_forward_euler(self,dt=None):
         if dt != None:
@@ -342,31 +417,36 @@ class Simulation():
         step_count = 0
         end_flag=False
         for i,end_t in enumerate(times[1:],start=1):
-            while current_t < end_t and step_count < self.max_steps and end_flag==False:
+            print 'Evolving to %.2f' % end_t
+            while current_t < end_t: # and step_count < self.max_steps and end_flag==False:
                 if current_t + self.dt > end_t:
                     self.dt = end_t - current_t
-                    self.take_step()
+                self.take_step()
+                self.move_planet()
+                current_t += self.dt
+                if current_t != end_t:
                     self.dt = dt
-                    current_t = end_t
-                else:
-                    self.take_step()
-                    current_t += self.dt
 
-                step_count += 1
-                if step_count > self.max_steps:
-                    'Print Exceeded number of substeps'
-                    end_flag = True
-                if nan in self.fld.sigma or self.fld.vs==nan:
-                    'Print NaN detected, exiting.'
-                    end_flag = True
+                if self.fld.a < self.fld.r[0] or self.fld.a > self.fld.r[-1]:
+                    print 'Planet left disk!'
+                    return status
 
-            print 'Saving at t=%f' % current_t
+                # step_count += 1
+                # if step_count > self.max_steps:
+                #     'Print Exceeded number of substeps'
+                #     end_flag = True
+                # if nan in self.fld.sigma or self.fld.vs==nan:
+                #     'Print NaN detected, exiting.'
+                #     end_flag = True
+
+#            print 'Saving at t=%f' % current_t
 
             status.sigma[:,i] = self.fld.sigma
             status.a[i] = self.fld.a
             status.vs[i] = self.fld.vs
             status.vr[:,i] = self.vr
             status.dTr[:,i] = self.dTr
+            status.r[:,i] = status.r[:,0] + self.fld.vs*end_t
 
             if end_flag:
                 return status
