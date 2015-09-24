@@ -9,6 +9,7 @@ class Status():
     def __init__(self,t,r,nr,nt):
         self.sigma = zeros((nr,nt))
         self.vr = zeros(self.sigma.shape)
+        self.mdot = zeros(self.sigma.shape)
         self.dTr = zeros(self.sigma.shape)
         self.a = zeros(t.shape)
         self.vs = zeros(t.shape)
@@ -19,7 +20,8 @@ class Status():
     def animate(self,q='sigma',tend=None):
         qvals={'sigma':self.sigma,
                 'vr':self.vr,
-                'dTr':self.dTr}
+                'dTr':self.dTr,
+                'mdot':self.mdot}
 
         # if follow_planet:
         #     xstr = '$r-v_s t$'
@@ -78,6 +80,7 @@ class Field():
         self.r = r
         self.nr = len(self.r)
         self.inds = array(range(self.ng,self.nr-self.ng))
+        self.ir = r[self.inds]
         self.dr = diff(r)[0]
         self.omk = r**(-1.5)
         self.omk2 = self.omk**2
@@ -85,7 +88,7 @@ class Field():
         self.mud = mud
         self.c2 = hor**2 * r**(-k)
         self.nu = alpha * hor**2 * self.r**(-k+1.5)
-
+        self.dlnu = -k+1.5
         self.sigma = (mud/(3*pi*self.nu))#(mud/(a*a*pi))*r**(-l)
         self.drsigma = self.grad(self.sigma)
         self.d2rsigma = self.grad2(self.sigma)
@@ -96,9 +99,10 @@ class Field():
         self.k = k
         self.l = l
         self.f = (-k+1)/2
+
         self.H = hor * r[self.inds]**(self.f)
-        self.omegap2 = -(k+l)*self.c2/r**2
-        self.omega2 = self.omegap2 + self.omk2
+        self.omegap2 = (-(k+l)*self.c2/r**2)[self.inds]
+        self.omega2 = self.omegap2 + self.omk2[self.inds]
         self.omega = sqrt(self.omega2)
         self.a = a
         self.mp = mp
@@ -130,16 +134,17 @@ class Field():
         return d2q/self.dr/self.dr
 
     def set_m(self):
-         D = (self.omega[self.inds] - self.oms)**2 - self.c2[self.inds]/self.r[self.inds]**2
+         D = (self.omega  - self.oms)**2 - self.c2[self.inds]/self.r[self.inds]**2
          self.m = array([sqrt(kap/d) if d>0 and kap>0 else 0 for d,kap in zip(D,self.kappa2)])
          self.xi = self.m * sqrt(self.c2[self.inds])/(self.r[self.inds]*sqrt(self.kappa2))
 
     def set_kappa2(self):
-        dls = self.r[self.inds]*self.drsigma/self.sigma[self.inds]
-        d2ls = self.r[self.inds]**2*self.d2rsigma/self.sigma[self.inds] + dls - dls**2
+        l = -self.r[self.inds]*self.drsigma/self.sigma[self.inds]
+#        d2ls = self.r[self.inds]**2*self.d2rsigma/self.sigma[self.inds] + dls - dls**2
 
 
-        self.kappa2 = 4*self.omega2[self.inds] + -3 + (dls -(self.k-dls)*(2-self.k))*self.c2[self.inds]/self.r[self.inds]**2
+        self.kappa2 =(1 + self.ir*(self.k*(-3+l)-l*(3+l))*self.c2[self.inds])*self.sigma[self.inds] + self.ir**3 *self.c2[self.inds]*self.d2rsigma
+        self.kappa2 /= (self.ir**3 * self.sigma[self.inds])
 
 #        self.kappa2 = self.grad(self.r**4 * self.omega2)/self.r[self.inds]**3
 
@@ -147,10 +152,13 @@ class Field():
         self.drsigma = self.grad(self.sigma)
         self.d2rsigma = self.grad2(self.sigma)
 
-        l = -self.r[self.inds]*self.drsigma/self.sigma[self.inds]
+        l = -self.ir*self.drsigma/self.sigma[self.inds]
         self.omegap2 = -(self.k+l)*self.c2[self.inds]/self.r[self.inds]**2
-        self.omega2 =  self.omk2 + self.omegap2
+        self.omega2 =  self.omk2[self.inds] + self.omegap2
         self.omega = sqrt(self.omega2)
+
+
+
 
     def set_all(self,sigma):
         self.sigma = sigma
@@ -180,10 +188,17 @@ class Simulation():
         self.smoothed = smoothed
         self.nsmooth = nsmooth
         self.dt = 1
+        self.lam = self.fld.sigma * 2*pi*self.fld.r
+        self.lam = self.set_bc(self.lam)
+        self.drlam = self.fld.grad(self.lam)
+        self.d2rlam = self.fld.grad2(self.lam)
+        self.zarray = zeros(self.fld.sigma.shape)
         self.fld.set_all(self.fld.sigma)
         self.set_torques()
         self.set_vs()
-        self.set_vr()
+
+
+#        self.set_vr()
 
 
         if steady_state:
@@ -267,7 +282,7 @@ class Simulation():
 
             val = self.Tnorm *self.fld.hor**3 * self.fld.m**2 * self.mpsi**2
             val *= eps*(self.fld.oms**2/self.fld.kappa2)
-            val /= (self.fld.r*(1 + 4*self.fld.xi**2))
+            val /= (self.fld.r[self.fld.inds]*(1 + 4*self.fld.xi**2))
 
 
             if self.smoothed:
@@ -275,42 +290,54 @@ class Simulation():
             else:
                 self.dTr = val
         else:
-            self.dTr = zeros(self.fld.r.shape)
-            self.Tnorm = ones(self.fld.r.shape)
+            self.dTr = zeros(self.fld.r[self.fld.inds].shape)
+            self.Tnorm = ones(self.fld.r[self.fld.inds].shape)
 
 
-    def set_vr(self,sigma=None):
-        if sigma==None:
-            sigma = self.fld.sigma
+    def set_vr(self,lam=None):
+        if lam==None:
+            lam = self.lam
+        sigma = lam/(2*pi*self.fld.r)
+#        self.dGr = -3*pi*self.fld.nu[self.fld.inds]*sqrt(self.fld.ir) *( self.fld.drsigma + sigma[self.fld.inds]*(2 - self.fld.k) )
+#        self.fld.mdot[self.fld.inds] = (self.dGr + sigma[self.fld.inds]*self.dTr)/(2*pi*self.fld.ir**2 * sigma[self.fld.inds]*self.fld.omk[self.fld.inds])
+        res = 1.5*(self.fld.nu/self.fld.r) * ( (2*self.fld.dlnu - 1)*self.lam)
+        self.dGr= res[self.fld.inds] + 3*(self.fld.nu/self.fld.r)[self.fld.inds] * self.fld.ir * self.drlam
 
-        self.vr = zeros(sigma.shape)
-        self.dGg = -3*pi*self.fld.nu[self.fld.inds]*sqrt(self.fld.r[self.fld.inds]) *( self.fld.grad(sigma) + sigma[self.fld.inds]*(2 - self.fld.k) )
-        self.vr[self.fld.inds] = (self.dGr + sigma[self.fld.inds]*self.dTr)/(2*pi*self.fld.r[self.fld.inds]**2 * sigma[self.fld.inds]*self.fld.omk[self.fld.inds])
+        self.fld.mdot[self.fld.inds] = self.dGr  - 2*sqrt(self.fld.ir)*self.dTr
 
-        self.vr[:self.fld.ng] = ones(self.vr[:self.fld.ng].shape)*self.vr[self.fld.ng]
-        self.vr[-self.fld.ng:] = -1.5 * self.nu[-self.fld.ng:]/self.fld.r[-self.fld.ng:]
 
-        self.mdot = self.vr * sigma * - 2 * pi * self.fld.r
+        self.fld.mdot[:self.fld.ng] = ones(self.fld.mdot[:self.fld.ng].shape)*self.fld.mdot[self.fld.ng]
+        self.fld.mdot[-self.fld.ng:] = ones(self.fld.mdot[:self.fld.ng].shape)*self.mdot_func()
+
+        # self.fld.vr[self.fld.inds] = (self.dGr + sigma[self.fld.inds]*self.dTr)/(2*pi*self.fld.ir**2 * sigma[self.fld.inds]*self.fld.omk[self.fld.inds])
+        # self.fld.vr[:self.fld.ng] = ones(self.fld.vr[:self.fld.ng].shape)*self.fld.vr[self.fld.ng]
+        # self.fld.vr[-self.fld.ng:] = -1.5 * self.fld.nu[-self.fld.ng:]/self.fld.r[-self.fld.ng:]
+
+        self.fld.vr = -self.fld.mdot/(lam)
 
 
     def set_dt(self,dt):
         self.dt = dt
 
     def calc_rhs(self,lam):
-        sigma = self.set_bc(lam)
+        lam = self.set_bc(lam)
+        sigma = lam/(2*pi*self.fld.r)
 #        ds = self.fld.grad(sigma)
+        self.lam = lam
         if self.fixed_torque:
             self.fld.sigma = sigma
+            self.fld.drsigma = self.fld.grad(sigma)
+            self.fld.d2rsigma = self.fld.grad2(sigma)
             self.set_vs(sigma)
         else:
             self.fld.set_all(sigma)
             self.set_torques()
             self.set_vs(sigma)
 
-        self.set_vr(sigma)
+        self.set_vr(lam)
 
 #ds*self.fld.vs
-        rhs = self.fld.grad(self.mdot)
+        rhs = self.fld.grad(self.fld.mdot)
 
         return rhs
 
@@ -325,15 +352,16 @@ class Simulation():
         # sigma[-1] /= (2*pi*self.fld.r[-1])
 #        sigma[0] = self.fld.sig0[0]
 #        sigma[-1] = self.fld.sig0[-1]
-        sigma = copy(self.zarray)
-        sigma[self.fld.inds] = lam/(pi*self.fld.r[self.fld.inds])
-        sigma[:self.fld.ng] = sigma[self.fld.ng] * self.fld.r[self.fld.ng]/self.fld.r[:self.fld.ng]
-        sigma[-self.fld.ng:] = self.mdot_func()/(3*pi*self.nu[-self.fld.ng:])
+#        sigma = copy(self.zarray)
 
-        return sigma
+#        lam[self.fld.inds] = lam[self.fld.inds]/(pi*self.fld.ir)
+        lam[:self.fld.ng] = lam[self.fld.ng]
+        lam[-self.fld.ng:] = lam[-self.fld.ng-1] #self.mdot_func()/(3*pi*self.fld.nu[-self.fld.ng:])
+
+        return lam
 
     def mdot_func(self):
-        return 1e-4
+        return self.fld.mud
     def set_vs(self,sigma=None):
         if sigma==None:
             sigma = self.fld.sigma
@@ -350,42 +378,68 @@ class Simulation():
         if dt != None:
             self.set_dt(dt)
 
-        self.fld.sigma += self.dt*self.calc_rhs(self.fld.sigma)
-        self.fld.sigma = self.set_bc(self.fld.sigma)
+        self.lam[self.fld.inds]= self.lam[self.fld.inds] + self.dt*self.calc_rhs(self.lam)
+        self.fld.sigma = self.lam/(2*pi*self.fld.r)
 #        self.move_planet()
 
     def take_step_backward_euler(self,dt=None):
         if dt != None:
             self.set_dt(dt)
 
-        sig0 = self.fld.sigma
-        f0 = self.fld.sigma + self.dt*self.calc_rhs(self.fld.sigma)
+#        sig0 = self.fld.sigma
+#        f0 = self.fld.sigma + self.dt*self.calc_rhs(self.fld.sigma)
 
-        self.fld.sigma = fsolve( lambda x: x - sig0 - dt*self.calc_rhs(x),f0)
-        self.fld.sigma = self.set_bc(self.fld.sigma)
+        lam0 = self.lam[self.fld.inds]
+        f0 = lam0 + self.dt*self.calcrhs(self.lam)
+
+        self.lam[self.fld.inds] = fsolve( lambda x: x - lam0 - self.dt*self.calc_rhs(x),f0)
+        self.fld.sigma = self.lam/(2*pi*self.fld.r)
+#        self.fld.sigma = self.set_bc(self.fld.sigma)
 #        self.move_planet()
 
     def take_step_rk2(self,dt=None):
         if dt != None:
             self.set_dt(dt)
 
-        sig0 = self.fld.sigma
-        k1 = self.calc_rhs(sig0)
-        k2 = self.calc_rhs(sig0 + .5*self.dt*k1)
-        self.fld.sigma = sig0 + k2
-        self.fld.sigma = self.set_bc(self.fld.sigma)
+        lam0 = self.lam
+        k1 = self.calc_rhs(lam0)
+        nlam = lam0
+        nlam[self.fld.inds] += .5*self.dt*k1
+
+        k2 = self.calc_rhs(nlam)
+
+        nlam = lam0
+        nlam[self.fld.inds] += self.dt*k2
+        self.lam[self.fld.inds] = nlam
+        self.fld.sigma = nlam/ (2*pi*self.fld.r)
 #        self.move_planet()
 
     def take_step_rk4(self,dt=None):
         if dt != None:
             self.set_dt(dt)
+
         lam0 = self.fld.sigma*pi*self.fld.r
         k1 = self.calc_rhs(lam0)
-        k2 = self.calc_rhs(lam0 + .5*self.dt*k1)
-        k3 = self.calc_rhs(lam0 + .5*self.dt*k2)
-        k4 = self.calc_rhs(lam0 + self.dt*k3)
 
-        new_lam = lam0 + (self.dt/6)*(k1+2*(k2+k3)+k4)
+        nlam = copy(lam0)
+        nlam[self.fld.inds] += .5*self.dt*k1
+        nlam = self.set_bc(nlam)
+        k2 = self.calc_rhs(nlam)
+
+        nlam = copy(lam0)
+        nlam[self.fld.inds] += .5*self.dt*k2
+        nlam = self.set_bc(nlam)
+
+        k3 = self.calc_rhs(nlam)
+
+        nlam = copy(lam0)
+        nlam[self.fld.inds] += .5*self.dt*k3
+        nlam = self.set_bc(nlam)
+
+        k4 = self.calc_rhs(nlam)
+
+        new_lam = lam0
+        new_lam[self.fld.inds] += (self.dt/6)*(k1+2*(k2+k3)+k4)
         self.fld.sigma = new_lam /(pi*self.fld.r)
 #        self.fld.sigma = self.set_bc(self.fld.sigma)
 #        self.move_planet()
@@ -433,13 +487,14 @@ class Simulation():
         self.dt = dt
         self.max_steps = 1e3
         nt = len(times)
-        nr = len(self.fld.r)
-        status = Status(times,self.fld.r,nr,nt)
+        nr = len(self.fld.ir)
+        status = Status(times,self.fld.ir,nr,nt)
 
-        status.sigma[:,0] = self.fld.sigma
+        status.sigma[:,0] = self.fld.sigma[self.fld.inds]
         status.a[0] = self.fld.a
         status.vs[0] = self.fld.vs
-        status.vr[:,0] = self.vr
+        status.vr[:,0] = self.fld.vr[self.fld.inds]
+        status.mdot[:,0] = self.fld.mdot[self.fld.inds]
         status.dTr[:,0] = self.dTr
 
         current_t = times[0]
@@ -451,7 +506,8 @@ class Simulation():
                 if current_t + self.dt > end_t:
                     self.dt = end_t - current_t
                 self.take_step()
-                self.move_planet()
+                if not self.fixed_planet:
+                    self.move_planet()
                 current_t += self.dt
                 if current_t != end_t:
                     self.dt = dt
@@ -470,10 +526,11 @@ class Simulation():
 
 #            print 'Saving at t=%f' % current_t
 
-            status.sigma[:,i] = self.fld.sigma
+            status.sigma[:,i] = self.fld.sigma[self.fld.inds]
             status.a[i] = self.fld.a
             status.vs[i] = self.fld.vs
-            status.vr[:,i] = self.vr
+            status.vr[:,i] = self.fld.vr[self.fld.inds]
+            status.mdot[:,i] = self.fld.mdot[self.fld.inds]
             status.dTr[:,i] = self.dTr
             status.r[:,i] = status.r[:,0] + self.fld.vs*end_t
 
