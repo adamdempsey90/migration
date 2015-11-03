@@ -168,6 +168,17 @@ class Simulation():
                 self.zero_mdot_outer = True
                 self.fixed_lam_outer = False
                 self.fixed_mdot = False
+    def calc_mdot(self,lam,rc,curr_a):
+        A, B = self.calc_coeff(rc,curr_a)
+        dlam = zeros(lam.shape)
+        dlam[1:-1] = (lam[1:] - lam[:-1])/(rc[1:]-rc[:-1])
+        dlam[0] =(lam[1]-lam[0])/(rc[1]-rc[0])
+        dlam[-1] = (lam[-1] - lam[-2])/(rc[1]-rc[0])
+
+        mdot = A*lam + B*dlam
+        return mdot
+    def calc_vr(self,lam,rc,curr_a):
+        return self.calc_mdot(lam,rc,curr_a)/(-lam)
 
     def Tfunc(self,rc,curr_a):
         xv = (rc-curr_a)/self.h
@@ -544,3 +555,16 @@ class Simulation():
     #    lami = lami/10 *  (rc/rc[-1])**10
     #    lami = exp(-(rc-1)**2/(2*.2**2))
         return lami
+
+def calc_mdot(lam,rc,curr_a):
+    A, B = calc_coeff(rc,curr_a)
+    dlam = zeros(lam.shape)
+    dlam[1:-1] = (lam[1:] - lam[:-1])/(rc[1:]-rc[:-1])
+    dlam[0] =(lam[1]-lam[0])/(rc[1]-rc[0])
+    dlam[-1] = (lam[-1] - lam[-2])/(rc[1]-rc[0])
+
+    mdot = A*lam + B*dlam
+    return mdot
+def calc_vr(lam,rc,curr_a):
+    return calc_mdot(lam,rc,curr_a)/(-lam)
+
