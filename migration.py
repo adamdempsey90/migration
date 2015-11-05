@@ -171,12 +171,14 @@ class Simulation():
     def calc_mdot(self,lam,rc,curr_a):
         A, B = self.calc_coeff(rc,curr_a)
         dlam = zeros(lam.shape)
-        dlam[1:-1] = (lam[1:] - lam[:-1])/(rc[1:]-rc[:-1])
+        dlam[1:-1] = (lam[2:] - lam[:-2])/(rc[2:]-rc[:-2])
         dlam[0] =(lam[1]-lam[0])/(rc[1]-rc[0])
         dlam[-1] = (lam[-1] - lam[-2])/(rc[1]-rc[0])
-
+        dtr = self.Tfunc(rc,curr_a)/(pi*sqrt(rc))
+        fac1 = 3*self.nu(rc)*dlam
+        fac2 = dtr*lam
         mdot = A*lam + B*dlam
-        return mdot
+        return mdot,fac1 #,fac2,lam,dlam
     def calc_vr(self,lam,rc,curr_a):
         return self.calc_mdot(lam,rc,curr_a)/(-lam)
 
@@ -437,7 +439,8 @@ class Simulation():
         res.dlam[:,0] = zeros(self.lam0.shape)
         res.lam[:,0] = self.lam
         res.sigma[:,0] = self.lam/(2*pi*self.rc)
-
+        res.mdot[:,0],junk = self.calc_mdot(self.lam,self.rc,self.planet_a)
+        res.vr[:,0] = res.mdot[:,0]/(-self.lam)
         curr_t = t[0]
         rc = copy(self.rc)
         dr = copy(self.dr)
@@ -489,6 +492,8 @@ class Simulation():
             res.lam[:,i] = self.lam
             res.dlam[:,i] = (self.lam-res.lam[:,0])/res.lam[:,0]
             res.sigma[:,i] = self.lam/(2*pi*self.rc)
+            res.mdot[:,i],junk = self.calc_mdot(self.lam,self.rc,self.planet_a)
+            res.vr[:,i] = res.mdot[:,i]/(-self.lam)
             if self.move_planet:
                 res.a[i] = self.planet_a
                 res.vs[i] = self.calc_drift_speed(rc,self.lam,self.planet_a)
@@ -550,8 +555,8 @@ class Simulation():
     def initial_cond(self,rc,dr):
 
     #    lami = (2./3)*self.mdot0*rc/self.nu(rc)
-        lami = 2*pi*rc*exp(-(rc-1.8)**2/.01)
-
+#        lami = 2*pi*rc*exp(-(rc-1.8)**2/.01)
+        lami = sqrt(rc) * ( 1- sqrt(rc[0]/rc))
     #    lami = lami/10 *  (rc/rc[-1])**10
     #    lami = exp(-(rc-1)**2/(2*.2**2))
         return lami
