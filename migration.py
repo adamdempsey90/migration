@@ -23,23 +23,44 @@ class Status():
         self.dTr = zeros(self.sigma.shape)
         self.a = zeros(t.shape)
         self.vs = zeros(t.shape)
-        self.vnorm = zeros(t.shape)
+
         self.t = t
         self.r = r
+        self.set_vnorm()
         self.rr = zeros(self.lam.shape)
+        self.vv = zeros(self.lam.shape)
         for i in range(nt):
             self.rr[:,i] = self.r
+            self.vv[:,i] = self.vnorm
     def nu(self,r):
         return self.alpha*self.h**2 * r**(self.gamma)
     def set_vnorm(self):
-        self.vnorm = -1.5*self.nu(self.a)/self.a
+        self.vnorm = -1.5*self.nu(self.r)/self.r
 
-    def animate(self,ref_line=None,ylims=(1e-3,1),logx=False,logy=False,linetype='-'):
+    def animate(self,q='lam',ref_line=None,ylims=None,logx=False,logy=False,linetype='-',plot_planet=False):
+
+        if q=='lam':
+            dat = self.lam
+            ystr = '$\\lambda$'
+        if q=='mdot':
+            dat = self.mdot
+            ystr = '$\\dot{M}$'
+        if q=='vr':
+            dat = self.vr/self.vv
+            ystr = '$v_r$'
+        if q=='dTr':
+            dat = self.dTr
+            ystr = '$\\frac{d T}{d r}$'
+        if q == 'dlam':
+            dat = self.dlam
+            ystr = '$\\frac{d \\lambda}{d r}$'
 
         fig=figure()
         ax=fig.add_subplot(111)
-        line, = ax.plot(self.r,self.lam[:,0],linetype)
-        line2, = ax.plot(self.a[0],1,'o',markersize=10)
+        line, = ax.plot(self.r,dat[:,0],linetype)
+
+        if plot_planet:
+            line2, = ax.plot(self.a[0],1,'o',markersize=10)
 
         if ref_line != None:
             ax.plot(self.r,ref_line,'--k')
@@ -49,17 +70,18 @@ class Status():
         if logy:
             ax.set_yscale('log')
 
-        ax.set_yscale('log')
-        ax.set_ylim(ylims)
+        if ylims != None:
+            ax.set_ylim(ylims)
         ax.set_xlabel('$r$',fontsize=20)
-        ax.set_ylabel('$\\lambda$',fontsize=20)
+        ax.set_ylabel(ystr,fontsize=20)
         ax.set_title('t = 0',fontsize=20)
         fig.canvas.draw()
 
         for i,ti in enumerate(self.t[1:],start=1):
             ax.set_title('t = %.1e' % ti)
-            line.set_ydata(self.lam[:,i])
-            line2.set_xdata(self.a[i])
+            line.set_ydata(dat[:,i])
+            if plot_planet:
+                line2.set_xdata(self.a[i])
             fig.canvas.draw()
 
     def plot(self,ivals=0,q='lam',logx=False,logy=False):
@@ -85,7 +107,7 @@ class Status():
             ax.set_yscale('log')
 
 class Simulation():
-    def __init__(self,alpha=.1,k=1,h=.1,mp=1,planet_a=1,beta=2./3,mdot=1e-6,mdot0=1e-6,G1=0,delta=.1,ri=1.0,ro=2.6,nr=64,move_planet=False,planet_torque=False,logarithmic_spacing=False):
+    def __init__(self,alpha=.1,k=1,h=.5,mp=1,planet_a=10,beta=2./3,mdot=1e-6,mdot0=1e-6,G1=0,delta=.1,ri=1.0,ro=50.,nr=128,move_planet=False,planet_torque=True,logarithmic_spacing=True):
         self.alpha = alpha
         self.k = k
         self.h = h
@@ -105,7 +127,6 @@ class Simulation():
         self.logarithmic_spacing = logarithmic_spacing
 
         self.verbose_output = False
-        self.fixed_mdot = True
 
         self.gamma = -k+1.5
         self.mach = 1/h
@@ -117,12 +138,12 @@ class Simulation():
         self.safety_fac = .95
 
 
-        if planet_torque:
-            print 'Mp = %.2e Mth' % self.mp
-            print 'Mp = %.2e Mvisc' % (self.mp/self.mvisc)
-            print 'Mach # = %.1f' % self.mach
-
-
+        self.extrapolate_inner = False
+        self.fixed_mdot = False
+        self.fixed_lam_inner = True
+        self.fixed_lam_outer = True
+        self.bc_lam_value = [1e-3,1]
+        self.zero_mdot_outer = False
 
         self.rc,self.dr,_,_,_ = self.set_up_grid()
         self.r = self.rc
@@ -130,12 +151,13 @@ class Simulation():
         self.lam = copy(self.lam0)
         self.lam_final = (2./3)*self.mdot*self.r/self.nu(self.r)
 
-        self.extrapolate_inner = True
-        self.fixed_mdot = True
-        self.fixed_lam_inner = False
-        self.fixed_lam_outer = False
-        self.bc_lam_value = [None,None]
-        self.zero_mdot_outer = False
+        if planet_torque:
+            print 'Mp = %.2e Mth' % self.mp
+            print 'Mp = %.2e Mvisc' % (self.mp/self.mvisc)
+            print 'Mach # = %.1f' % self.mach
+
+        print 'Viscous time = %.2e' % (1./(self.alpha * self.h * sqrt(self.rc[-1])))
+
     def add_bc(self,bcs,bc_val=(None,None)):
         if type(bcs) == str:
             bcs = [bcs]
@@ -190,7 +212,7 @@ class Simulation():
         res = (self.G1+1)*exp(-fac1**2) - exp(-fac2**2)
     #    sigp = interp(sigma,planet_a)
         Tnorm = 2*pi * curr_a*self.mp**2 *self.mach*self.mth
-        return Tnorm*res/norm
+        return Tnorm*res/norm * int(self.planet_torque)
 
     def nu(self,rc):
         return self.alpha* self.h**2 * rc**self.gamma
@@ -209,6 +231,7 @@ class Simulation():
 
 
     def set_bc(self,rc,dr,curr_a,md,ld,ud,Fmat):
+        print 'Entered bc'
         rm1 = rc[0]-dr[0]
         rp1 = (rc[0]+rc[1])/2
         num1 = self.nu(rm1)
@@ -229,10 +252,10 @@ class Simulation():
 
     #    md[0] = 0; ud[0] = 0;
 
-        if self.fixed_lam_inner:
-            lam0 = self.bc_lam_value[0]
-            md[0] = lam0
-            ud[0] = 0
+#        if self.fixed_lam_inner:
+#            lam0 = self.bc_lam_value[0]
+#            md[0] = lam0
+#            ud[0] = 0
 
 
 
@@ -248,12 +271,18 @@ class Simulation():
             md[-1] = 0;
             ld[-1] = 0;
 
-        if self.fixed_lam_outer:
-            lamN = self.bc_lam_value[-1]
-            delta_r = rc[-1]-rc[-2]
-            Fmat[-1]  = lamN*(am1/2 + bm1/delta_r)
-            md[-1] = 0
-            ld[-1] = (am1/2 - bm1/delta_r)
+#        if self.fixed_lam_outer:
+#            lamN = self.bc_lam_value[-1]
+#            delta_r = rc[-1]-rc[-2]
+#            Fmat[-1]  = lamN*(am1/2 + bm1/delta_r)
+#            md[-1] = 0
+#            ld[-1] = (am1/2 - bm1/delta_r)
+
+    def calc_flux2(self,rc,dr,curr_a):
+
+        for i in range(self.nr):
+
+
 
     def calc_flux(self,rc,dr,curr_a):
         r_face= (rc[:-1]+rc[1:])/2
@@ -296,7 +325,9 @@ class Simulation():
         Fmat = zeros(rc.shape)
 
         self.set_bc(rc,dr,curr_a,md,ld,ud,Fmat)
-
+#        print 'Calling bc'
+ #       self.set_bc(rc,dr,curr_a,md,ld,ud,Fmat)
+  #      print 'End bc'
 #        am1,bm1 = self.calc_coeff(.5*(rc[-1]+rc[-2]),curr_a)
 
  #       if self.fixed_mdot:
@@ -319,10 +350,18 @@ class Simulation():
     def take_step_crank(self,dt,rc,dr,lam,curr_a=1,Mmat=None,Amat=None,Fmat=None):
 
         if Mmat == None and Amat == None and Fmat == None:
-            Mmat,Amat,Fmat = self.calc_flux(rc,dr,curr_a)
+           Mmat,Amat,Fmat = self.calc_flux(rc,dr,curr_a)
 
         lhs = Mmat - .5*dt*Amat
         rhs = dot(Mmat+.5*dt*Amat,lam) + dt*Fmat
+
+        if self.fixed_lam_inner:
+            lhs[0,:] = zeros(lhs[0,:].shape)
+            lhs[0,0] = 1.
+            lhs[-1,:] = zeros(lhs[-1,:].shape)
+            lhs[-1,-1] = 1.
+            rhs[0] = self.bc_lam_value[0]
+            rhs[-1] = self.bc_lam_value[-1]
 
         md = diag(lhs,0)
         ud = diag(lhs,1)
@@ -553,10 +592,11 @@ class Simulation():
         return rc,dr,xl,xr,xp
 
     def initial_cond(self,rc,dr):
-
-    #    lami = (2./3)*self.mdot0*rc/self.nu(rc)
+            #    lami = (2./3)*self.mdot0*rc/self.nu(rc)
 #        lami = 2*pi*rc*exp(-(rc-1.8)**2/.01)
-        lami = sqrt(rc) * ( 1- sqrt(rc[0]/rc))
+        if self.fixed_lam_outer:
+            a = log(self.bc_lam_value[0]/self.bc_lam_value[1]) / log(rc[0]/rc[-1])
+            lami =  self.bc_lam_value[2] * pow(rc/rc[-1],a)
     #    lami = lami/10 *  (rc/rc[-1])**10
     #    lami = exp(-(rc-1)**2/(2*.2**2))
         return lami
