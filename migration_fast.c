@@ -159,9 +159,14 @@ void crank_nicholson_step(double dt,double *ld, double *md, double *ud, double *
     int i;
     double ap,am, bm,bp, rm, rp;
 
-    for(i=0;i<NR;i++) {
+    for(i=0;i<NR-1;i++) {
         fm[i] = 0;
+        md[i] = 0;
+        ud[i] = 0;
+        ld[i] = 0;
     }
+    md[NR-1] = 0;
+    fm[NR-1] = 0;
 
     md[0] = 1;
     ud[0] = 0;
