@@ -3,7 +3,7 @@ from scipy.interpolate import interp1d
 from numpy import *
 from matplotlib.pyplot import *
 import thomas
-
+import multiprocessing as mpi
 
 class Status():
     def __init__(self,t,r,**kwargs):
@@ -37,7 +37,7 @@ class Status():
     def set_vnorm(self):
         self.vnorm = -1.5*self.nu(self.r)/self.r
 
-    def animate(self,q='lam',ref_line=None,ylims=None,logx=False,logy=False,linetype='-',plot_planet=False):
+    def animate(self,q='lam',ref_line=None,ylims=None,logx=False,logy=False,linetype='-',plot_planet=False,multiplier=1):
 
         if q=='lam':
             dat = self.lam
@@ -57,8 +57,8 @@ class Status():
 
         fig=figure()
         ax=fig.add_subplot(111)
-        line, = ax.plot(self.r,dat[:,0],linetype)
-
+        line, = ax.plot(self.r,dat[:,0]*multiplier,linetype)
+        ax.plot(self.r,dat[:,0]*multiplier,color='grey')
         if plot_planet:
             line2, = ax.plot(self.a[0],1,'o',markersize=10)
 
@@ -79,7 +79,7 @@ class Status():
 
         for i,ti in enumerate(self.t[1:],start=1):
             ax.set_title('t = %.1e' % ti)
-            line.set_ydata(dat[:,i])
+            line.set_ydata(dat[:,i]*multiplier)
             if plot_planet:
                 line2.set_xdata(self.a[i])
             fig.canvas.draw()
@@ -107,13 +107,15 @@ class Status():
             ax.set_yscale('log')
 
 class Simulation():
-    def __init__(self,alpha=.1,k=1,h=.5,mp=1,planet_a=10,beta=2./3,mdot=1e-6,mdot0=1e-6,G1=0,delta=.1,ri=1.0,ro=50.,nr=128,move_planet=False,planet_torque=True,logarithmic_spacing=True):
+    def __init__(self,alpha=.06,k=1,h=.1,mp=1,planet_a=10,beta=2./3,mdot=1e-6,mdot0=1e-6,G1=0,delta=.3,ri=4.0,ro=30.,nr=1024,move_planet=False,planet_torque=True,logarithmic_spacing=False,uniform_spacing=False,bc_lam=[1e-3,1]):
         self.alpha = alpha
         self.k = k
         self.h = h
         self.mp = mp
         self.planet_a = planet_a
         self.beta = beta
+        self.rh = (mp*h**3/3)**(1./3) * planet_a
+        self.dep = max(self.h,self.rh)
         self.mdot = mdot
         self.mdot0 = mdot0
         self.G1 = G1
@@ -125,14 +127,14 @@ class Simulation():
         self.move_planet= move_planet
         self.planet_torque = planet_torque
         self.logarithmic_spacing = logarithmic_spacing
-
+        self.uniform_spacing = uniform_spacing
         self.verbose_output = False
 
         self.gamma = -k+1.5
         self.mach = 1/h
         self.mth = h**3
         self.mvisc = sqrt( 27*pi/8 * self.alpha*self.mach)
-
+        self.tvisc = self.ro**2/self.nu(self.ro)
         self.min_dt = 1e-2
         self.tol = 1e-6
         self.safety_fac = .95
@@ -142,10 +144,11 @@ class Simulation():
         self.fixed_mdot = False
         self.fixed_lam_inner = True
         self.fixed_lam_outer = True
-        self.bc_lam_value = [1e-3,1]
+        self.bc_lam_value = bc_lam
+
         self.zero_mdot_outer = False
 
-        self.rc,self.dr,_,_,_ = self.set_up_grid()
+        self.rc,self.dr = self.set_up_grid()
         self.r = self.rc
         self.lam0 = self.initial_cond(self.rc,self.dr)
         self.lam = copy(self.lam0)
@@ -156,8 +159,8 @@ class Simulation():
             print 'Mp = %.2e Mvisc' % (self.mp/self.mvisc)
             print 'Mach # = %.1f' % self.mach
 
-        print 'Viscous time = %.2e' % (1./(self.alpha * self.h * sqrt(self.rc[-1])))
-
+        print 'Viscous time = %.2e' % self.tvisc
+        print 'R bounds: %lg\t%lg' % (self.rc[0],self.rc[-1])
     def add_bc(self,bcs,bc_val=(None,None)):
         if type(bcs) == str:
             bcs = [bcs]
@@ -195,7 +198,7 @@ class Simulation():
         dlam = zeros(lam.shape)
         dlam[1:-1] = (lam[2:] - lam[:-2])/(rc[2:]-rc[:-2])
         dlam[0] =(lam[1]-lam[0])/(rc[1]-rc[0])
-        dlam[-1] = (lam[-1] - lam[-2])/(rc[1]-rc[0])
+        dlam[-1] = (lam[-1] - lam[-2])/(rc[-1]-rc[-2])
         dtr = self.Tfunc(rc,curr_a)/(pi*sqrt(rc))
         fac1 = 3*self.nu(rc)*dlam
         fac2 = dtr*lam
@@ -205,7 +208,7 @@ class Simulation():
         return self.calc_mdot(lam,rc,curr_a)/(-lam)
 
     def Tfunc(self,rc,curr_a):
-        xv = (rc-curr_a)/self.h
+        xv = (rc-curr_a)/self.dep
         norm = self.delta*sqrt(pi)
         fac1 = (xv-self.beta)/self.delta
         fac2 = (xv+self.beta)/self.delta
@@ -220,12 +223,12 @@ class Simulation():
     def mass_to_lam(self,rc,dr,mass):
         return mass/dr
 
-    def calc_coeff(self,rc,curr_a):
-        Bc = 3*self.nu(rc)
-        Ac = Bc*(self.gamma-.5)/rc
+    def calc_coeff(self,x,curr_a):
+        Bc = 3*self.nu(x)
+        Ac = Bc*(self.gamma-.5)/x
         if self.planet_torque:
-            dtr = self.Tfunc(rc,curr_a)
-            Ac -= dtr/(pi*sqrt(rc))
+            dtr = self.Tfunc(x,curr_a)
+            Ac -= dtr/(pi*sqrt(x))
         return Ac,Bc
 
 
@@ -278,21 +281,14 @@ class Simulation():
 #            md[-1] = 0
 #            ld[-1] = (am1/2 - bm1/delta_r)
 
-    def calc_flux2(self,rc,dr,curr_a):
-
-        for i in range(self.nr):
-
-
-
     def calc_flux(self,rc,dr,curr_a):
         r_face= (rc[:-1]+rc[1:])/2
-        drp = dr[:-1]+dr[1:]
         A_face,B_face = self.calc_coeff(r_face,curr_a)
 
         ld = zeros(len(rc)-1)
         md = zeros(len(rc))
         ud = zeros(len(rc)-1)
-
+        Fmat = zeros(rc.shape)
 
         for i in range(1,len(rc)-1):
             md[i] = .5*(A_face[i]-A_face[i-1])
@@ -322,9 +318,8 @@ class Simulation():
 
     #    md[0] = 0; ud[0] = 0;
 
-        Fmat = zeros(rc.shape)
 
-        self.set_bc(rc,dr,curr_a,md,ld,ud,Fmat)
+#        self.set_bc(rc,dr,curr_a,md,ld,ud,Fmat)
 #        print 'Calling bc'
  #       self.set_bc(rc,dr,curr_a,md,ld,ud,Fmat)
   #      print 'End bc'
@@ -340,32 +335,50 @@ class Simulation():
     #        md[-1] = 0;
      #       ld[-1] = 0;
 
-        Amat = diag(md,0)+diag(ud,1)+diag(ld,-1)
+ #       Amat = diag(md,0)+diag(ud,1)+diag(ld,-1)
 
-        Mmat = diag(dr,0)
+ #       Mmat = diag(dr,0)
 
-        return Mmat,Amat,Fmat
+        return ld,md,ud,Fmat
 
 
     def take_step_crank(self,dt,rc,dr,lam,curr_a=1,Mmat=None,Amat=None,Fmat=None):
 
-        if Mmat == None and Amat == None and Fmat == None:
-           Mmat,Amat,Fmat = self.calc_flux(rc,dr,curr_a)
+ #       if Mmat == None and Amat == None and Fmat == None:
+        ld,md,ud,Fmat = self.calc_flux(rc,dr,curr_a)
 
-        lhs = Mmat - .5*dt*Amat
-        rhs = dot(Mmat+.5*dt*Amat,lam) + dt*Fmat
+ #       lhs = Mmat - .5*dt*Amat
+  #      rhs = dot(Mmat+.5*dt*Amat,lam) + dt*Fmat
+
+        md *= .5*dt
+        ld *= .5*dt
+        ud *= .5*dt
+
+        rhs = (dr+md)*lam + dt*Fmat
+        rhs[1:] += ld*lam[:-1]
+        rhs[:-1] += ud*lam[1:]
+
+        md = dr - md
+        ld *= -1
+        ud *= -1
+
+
+
 
         if self.fixed_lam_inner:
-            lhs[0,:] = zeros(lhs[0,:].shape)
-            lhs[0,0] = 1.
-            lhs[-1,:] = zeros(lhs[-1,:].shape)
-            lhs[-1,-1] = 1.
+#            lhs[0,:] = zeros(lhs[0,:].shape)
+            ud[0] = 0
+            md[0] = 1.
+
+#            lhs[-1,:] = zeros(lhs[-1,:].shape)
+            ld[-1] = 0
+            md[-1] = 1.
             rhs[0] = self.bc_lam_value[0]
             rhs[-1] = self.bc_lam_value[-1]
 
-        md = diag(lhs,0)
-        ud = diag(lhs,1)
-        ld = diag(lhs,-1)
+#        md = diag(lhs,0)
+#        ud = diag(lhs,1)
+#        ld = diag(lhs,-1)
 
         return thomas.trisolve((ld,md,ud),rhs)
 
@@ -475,7 +488,7 @@ class Simulation():
 
         res.a[0] = self.planet_a
         res.vs[0] = 0
-        res.dlam[:,0] = zeros(self.lam0.shape)
+        res.dlam[:,0] = zeros(self.lam.shape)
         res.lam[:,0] = self.lam
         res.sigma[:,0] = self.lam/(2*pi*self.rc)
         res.mdot[:,0],junk = self.calc_mdot(self.lam,self.rc,self.planet_a)
@@ -485,10 +498,10 @@ class Simulation():
         dr = copy(self.dr)
 
 
-        if not self.move_planet:
-            Mmat1,Amat1,Fmat1 = self.calc_flux(rc,dr,self.planet_a)
-        else:
-            Mmat1,Amat1,Fmat1 = None,None,None
+#        if not self.move_planet:
+#            Mmat1,Amat1,Fmat1 = self.calc_flux(rc,dr,self.planet_a)
+#        else:
+#            Mmat1,Amat1,Fmat1 = None,None,None
         breakflag = False
 
         for i,ti in enumerate(t[1:],start=1):
@@ -518,7 +531,7 @@ class Simulation():
         #                rc,dr,_,_,_=set_up_grid(ri,ro,nr,planet_a)
         #                lam = lam_interp(rc)
                     else:
-                        self.lam = self.take_step_crank(dt,rc,dr,self.lam,self.planet_a,Mmat=Mmat1,Amat=Amat1,Fmat=Fmat1)
+                        self.lam = self.take_step_crank(dt,rc,dr,self.lam,self.planet_a)
                         curr_t += dt
                 except KeyboardInterrupt:
                     print '\n\nCaught KeyboardInterrupt!\n\n'
@@ -542,61 +555,76 @@ class Simulation():
         return res
 
     def set_up_grid(self):
-
-        if self.planet_torque:
-            nsmall = self.Nr/2
-
-            dr_small = 2*(self.beta+2*self.delta)/(nsmall/2-1)
-
-
-            xp = dr_small/2 + arange(nsmall/2)*dr_small
-            xp = hstack((-xp[::-1],xp))
-
-            xp  = self.h*xp+self.planet_a
-
+        if self.uniform_spacing:
             if self.logarithmic_spacing:
-                dr_large_r = (log(self.ro)-log(xp[-1]))/(self.Nr/4-1)
-                dr_large_l = (log(xp[0])-log(self.ri))/(self.Nr/4-1)
-
-                xr = log(xp[-1]) + arange(1,nsmall/2)*dr_large_r
-                xl = log(xp[0]) - arange(1,nsmall/2)*dr_large_l
-                xr = exp(xr)
-                xl = exp(xl)
-            else:
-                dr_large_r = (self.ro-xp[-1])/(self.Nr/4-1)
-                dr_large_l = (xp[0]-self.ri)/(self.Nr/4-1)
-
-                xr = xp[-1] + arange(1,nsmall/2)*dr_large_r
-                xl = xp[0] - arange(1,nsmall/2)*dr_large_l
-
-            rc=hstack((xl[::-1],xp,xr))
-            dr = zeros(rc.shape)
-            dr[1:-1] = (rc[2:]-rc[:-2])*.5
-            dr[0] = rc[1]-rc[0]
-            dr[-1] = rc[-1]-rc[-2]
-        else:
-    #    dr= diff(rc)
-    #    dr = hstack((dr[0],dr))
-            if self.logarithmic_spacing:
-                dlr = (log10(self.ro)-log10(self.ri))/self.Nr
-                lrc = log10(self.ri) + arange(self.Nr)*dlr
-                rc = 10**lrc
-                dr = dlr*rc
-
+                rc = exp(linspace(log(self.ri),log(self.ro),self.Nr))
+                dr  = diff(log(rc))[0]*rc
             else:
                 rc = linspace(self.ri,self.ro,self.Nr)
                 dr = diff(rc)[0]*ones(rc.shape)
-            xl=zeros(rc.shape)
-            xr=zeros(rc.shape)
-            xp = zeros(rc.shape)
-        return rc,dr,xl,xr,xp
+        else:
+            if self.planet_torque:
+                nsmall = self.Nr/2
+
+                dr_small = 2*(self.beta+2*self.delta)/(nsmall/2-1)
+
+
+                xp = dr_small/2 + arange(nsmall/2)*dr_small
+                xp = hstack((-xp[::-1],xp))
+
+                xp  = self.dep*xp+self.planet_a
+
+                if self.logarithmic_spacing:
+                    dr_large_r = (log(self.ro)-log(xp[-1]))/(self.Nr/4-1)
+                    dr_large_l = (log(xp[0])-log(self.ri))/(self.Nr/4-1)
+
+                    xr = log(xp[-1]) + arange(1,nsmall/2)*dr_large_r
+                    xl = log(xp[0]) - arange(1,nsmall/2)*dr_large_l
+                    xr = exp(xr)
+                    xl = exp(xl)
+                else:
+                    dr_large_r = (self.ro-xp[-1])/(self.Nr/4-1)
+                    dr_large_l = (xp[0]-self.ri)/(self.Nr/4-1)
+
+                    xr = xp[-1] + arange(1,nsmall/2)*dr_large_r
+                    xl = xp[0] - arange(1,nsmall/2)*dr_large_l
+
+                rc=hstack((xl[::-1],xp,xr))
+                dr = zeros(rc.shape)
+                dr[1:-1] = (rc[2:]-rc[:-2])*.5
+                dr[0] = rc[1]-rc[0]
+                dr[-1] = rc[-1]-rc[-2]
+            else:
+        #    dr= diff(rc)
+        #    dr = hstack((dr[0],dr))
+                if self.logarithmic_spacing:
+                    dlr = (log(self.ro/self.ri))/self.Nr
+                    lrc = log(self.ri) + arange(self.Nr)*dlr
+                    rc = exp(lrc)
+                    dr = dlr*rc
+
+                else:
+                    rc = linspace(self.ri,self.ro,self.Nr)
+                    dr = diff(rc)[0]*ones(rc.shape)
+                xl=zeros(rc.shape)
+                xr=zeros(rc.shape)
+                xp = zeros(rc.shape)
+        return rc,dr #,xl,xr,xp
+
+    def input_init_cond(self,rc,x,y):
+        return interp1d(x,y)(rc)
 
     def initial_cond(self,rc,dr):
             #    lami = (2./3)*self.mdot0*rc/self.nu(rc)
 #        lami = 2*pi*rc*exp(-(rc-1.8)**2/.01)
         if self.fixed_lam_outer:
-            a = log(self.bc_lam_value[0]/self.bc_lam_value[1]) / log(rc[0]/rc[-1])
-            lami =  self.bc_lam_value[2] * pow(rc/rc[-1],a)
+#            a = log(self.bc_lam_value[0]/self.bc_lam_value[1]) / log(rc[0]/rc[-1])
+ #           lami =  self.bc_lam_value[1] * pow(rc/rc[-1],a)
+            sig0 = (1-sqrt(rc[0]/rc[-1]))*sqrt(rc[-1])
+            lami = sqrt(rc)*(1-sqrt(rc[0]/rc))/sig0
+            fac = (rc-rc[0])/(rc[-1]-rc[0])
+            sig0 = sin(fac[-1]*pi/2)
+            lami = self.bc_lam_value[0] + (self.bc_lam_value[1] -self.bc_lam_value[0])* sin(fac**4 *pi/2)
     #    lami = lami/10 *  (rc/rc[-1])**10
     #    lami = exp(-(rc-1)**2/(2*.2**2))
         return lami
@@ -612,4 +640,112 @@ def calc_mdot(lam,rc,curr_a):
     return mdot
 def calc_vr(lam,rc,curr_a):
     return calc_mdot(lam,rc,curr_a)/(-lam)
+
+
+def test_suite(ro_list,tend=1e4,steps=10,alpha=.06,nr=1024,res0=None,sim0=None,logarithmic_spacing=True):
+    if res0 == None:
+        sim0 = Simulation(ro=ro_list[-1],nr=nr,alpha=alpha,planet_torque=False,logarithmic_spacing=logarithmic_spacing)
+        times = linspace(0,tend,200)
+        res0 = sim0.evolve(times,steps)
+
+    lam0 = res0.lam[:,-1]
+    rc0 = res0.r
+
+    times = linspace(0,tend,200)
+
+    res_list = [res0]
+    sim_list = [sim0]
+    args = [(r,rc0,lam0,nr,alpha,times,steps,logarithmic_spacing) for r in ro_list]
+    for i in args:
+        s,r = run_ro_one(i)
+        sim_list.append(s)
+        res_list.append(r)
+
+    return sim_list,res_list
+
+def test_suite_a(a_list,tend=1e4,steps=10,ro=30,nr=1024,res0=None,sim0=None,logarithmic_spacing=True):
+    if res0 == None:
+        sim0 = Simulation(ro=ro,nr=nr,alpha=a_list[0],planet_torque=False,logarithmic_spacing=logarithmic_spacing)
+        times = linspace(0,tend,200)
+        res0 = sim0.evolve(times,steps)
+
+    lam0 = res0.lam[:,-1]
+    rc0 = res0.r
+
+    times = linspace(0,tend,200)
+
+    res_list = [res0]
+    sim_list = [sim0]
+    args = [(ro,rc0,lam0,nr,a,times,steps,logarithmic_spacing) for a in a_list]
+    for i in args:
+        s,r = run_ro_one(i)
+        sim_list.append(s)
+        res_list.append(r)
+
+    return sim_list,res_list
+
+
+def run_ro_one((r,rc0,lam0,nr,alpha,times,steps,log_spacing)):
+    temp = Simulation(ro=r,nr=nr,alpha=alpha,planet_torque=True,logarithmic_spacing=log_spacing)
+    temp.lam = temp.input_init_cond(temp.rc,rc0,lam0)
+    temp.add_bc('fixed_lam_outer',(temp.lam[0],temp.lam[-1]))
+    res  = temp.evolve(times,steps)
+    return temp,res
+
+
+def plot_summary(sim_list,res_list,logy=True,logx=True):
+    fig,axes = subplots(2,2,figsize=(15,10))
+
+###################################
+###################################
+##   sig,r     ##   delsig,h     ##
+##   (0,0)     ##   (0,1)        ##
+##             ##                ##
+###################################
+##             ##                ##
+##   mdot,r    ##   delmdot,h    ##
+##   (1,0)     ##     (1,1)      ##
+###################################
+###################################
+
+    x = (res_list[0].r-sim_list[0].planet_a)/sim_list[0].dep
+    axes[0,0].plot(res_list[0].r,res_list[0].lam[:,-1],color='grey')
+    axes[0,1].axhline(0,color='grey')
+    axes[1,0].plot(res_list[0].r,res_list[0].mdot[:,-1],color='grey')
+    axes[1,1].axhline(0,color='grey')
+
+    if logx:
+        axes[0,0].set_xscale('log')
+        axes[1,0].set_xscale('log')
+    if logy:
+        axes[0,0].set_yscale('log')
+    #axes[0,0].set_title('Thermal mass, alpha = 0.06, h=0.1, different r_outer')
+   # axes[1,0].set_yscale('log')
+    ilam0 = interp1d(res_list[0].r,res_list[0].lam[:,-1])
+    imdot0 = interp1d(res_list[0].r,res_list[0].mdot[:,-1])
+
+    for s,r in zip(sim_list[1:],res_list[1:]):
+        lam0 = ilam0(r.r)
+        mdot0 = imdot0(r.r)
+        x = (r.r - s.planet_a)/s.dep
+        axes[0,0].plot(r.r,r.lam[:,-1])
+        axes[0,1].plot(x,(r.lam[:,-1]-lam0)/lam0)
+        axes[1,0].plot(r.r,r.mdot[:,-1])
+        axes[1,1].plot(x,(r.mdot[:,-1]-mdot0)/mdot0)
+
+    axes[0,1].set_xlim(-5,5)
+    axes[1,1].set_xlim(-5,5)
+#    axes[1,0].set_xlim(8,12)
+    axes[1,1].set_ylim(-2,1)
+#    axes[1,0].set_ylim(1e-4,4e-4)
+#    axes[0,0].set_ylim(1e-1,1)
+    axes[1,0].set_xlabel('$r$',fontsize=20)
+    axes[1,1].set_xlabel('$\\frac{r-r_p}{max(h,r_h)}$',fontsize=20)
+    axes[0,0].set_ylabel('$\\lambda$',fontsize=20)
+    axes[0,1].set_ylabel('$\\frac{\\lambda-\\lambda_0}{\\lambda_0}$',fontsize=20)
+    axes[1,0].set_ylabel('$\\dot{M}$',fontsize=20)
+    axes[1,1].set_ylabel('$\\frac{\\dot{M}-\\dot{M}_0}{\\dot{M}_0}$',fontsize=20)
+
+    for ax in axes.flatten():
+        ax.minorticks_on()
 

@@ -16,30 +16,28 @@ int main(void) {
     double *md = (double *)malloc(sizeof(double)*NR);
     double *ud = (double *)malloc(sizeof(double)*(NR-1));
     double *fm = (double *)malloc(sizeof(double)*NR); 
-    mass = (double *)malloc(sizeof(double)*NR);
-
+    
    printf("Initializing matrices...\n"); 
     for(i=0;i<NR-1;i++) {
         ld[i] = 0;
         md[i] = 0;
         ud[i] = 0;
         fm[i] = 0;
-        mass[i] = rmin[i+1]-rmin[i];
-        
+                
     }
     md[NR-1] = 1;
     fm[NR-1] = 0;
-    mass[NR-1] = sqrt(rc[NR-1]*exp(log(params.ri) + NR*log(params.ro/params.ri)/((double)NR))) - rmin[NR-1];
-
+    
     double total_mass = 0;
-    for(i=0;i<NR;i++) total_mass += mass[i];
+    for(i=0;i<NR;i++) total_mass += dr[i]*lam[i];
 
-    double t_end = 500;
-    double dt = .05;
-    int nt = (int)(t_end/dt) + 2;
+    double t_end = 1e4;
+    double dt = 100;
+    int nt = (int)(t_end/dt)+1;
     double *times = (double *)malloc(sizeof(double)*nt);
     double *sol = (double *)malloc(sizeof(double)*NR*nt);
-
+    
+    for(i=0;i<NR*nt;i++) sol[i] = 0;
     for(i=0;i<NR;i++) {
         sol[i] = lam[i];
     }
@@ -73,7 +71,7 @@ int main(void) {
     fprintf(fname,"\n");
     fprintf(fname,"%.2e",total_mass);
     for(j=0;j<NR;j++) {
-        fprintf(fname, "\t%lg",mass[j]);
+        fprintf(fname, "\t%lg",dr[j]);
     }
     fprintf(fname,"\n");
 
@@ -91,7 +89,6 @@ int main(void) {
 
     free(times); free(sol);
     free(ld); free(md); free(ud);free(fm);
-    free(mass);
     free_grid();
     return 1;
 }
@@ -168,9 +165,6 @@ void crank_nicholson_step(double dt,double *ld, double *md, double *ud, double *
     md[NR-1] = 0;
     fm[NR-1] = 0;
 
-    md[0] = 1;
-    ud[0] = 0;
-    fm[0] *= dt;
     for(i=1;i<NR-1;i++) {
         rm = rmin[i];
         rp = rmin[i+1];
@@ -182,24 +176,18 @@ void crank_nicholson_step(double dt,double *ld, double *md, double *ud, double *
         
         //printf("%lg\t%lg\t%lg\t%lg\t%lg\n",rc[i],am,ap,bm,bp);
 
-        md[i] = (ap-am + bm - bp)*dt/2.;
+        md[i] = (ap-am - bm - bp)*dt/2.;
         ld[i-1] = (-am + bm)*dt/2.;
         ud[i] = (ap + bp)*dt/2.;
-        fm[i] *= dt;
-    }
-    fm[NR-1] *= dt;
-    md[NR-1] = 1;
-//    ld[NR-2] = 0;
+      }
     
-//    rm = rmin[NR-1];
-    
-//    ld[NR-2] = -3*nu(rm)*(params.gamma-.5)/(2*rm) + 3*nu(rm)/(rc[NR-1]-rc[NR-2]);
-
     matvec(ld,md,ud,lam,fm,NR);
 
     for(i=0;i<NR;i++) {
-        fm[i] += mass[i]*lam[i];
-        md[i] = mass[i] - md[i];
+        fm[i] += dr[i]*lam[i];
+        md[i] = dr[i] - md[i];
+        ld[i] *= -1;
+        ud[i] *= -1;
     }
 
     md[0] = 1;
@@ -208,6 +196,26 @@ void crank_nicholson_step(double dt,double *ld, double *md, double *ud, double *
     ud[0] = 0;
     fm[0] = params.bc_lam[0];
     fm[NR-1] = params.bc_lam[1];
+
+    FILE *fname = fopen("matrix.dat","w");
+
+    for(i=0;i<NR;i++) {
+        fprintf(fname,"%lg\t",md[i]);
+    }
+    fprintf(fname,"\n0\t");
+    for(i=0;i<NR-1;i++) {
+        fprintf(fname,"%lg\t",ld[i]);
+    }
+    fprintf(fname,"\n");
+    for(i=0;i<NR-1;i++) {
+        fprintf(fname,"%lg\t",ud[i]);
+    }
+    fprintf(fname,"0\n");
+    for(i=0;i<NR;i++) {
+        fprintf(fname,"%lg\t",fm[i]);
+    }
+    fprintf(fname,"\n");
+    fclose(fname);
 
     trisolve(ld,md,ud,fm,lam,NR);
 
@@ -255,30 +263,34 @@ void trisolve(double *ld, double *md, double *ud, double *d,double *sol,int n) {
 
 void init_lam(void) {
     int i;
-    double plaw = log(params.bc_lam[0]/params.bc_lam[1])/log(rc[0]/rc[NR-1]);
+//    double plaw = log(params.bc_lam[0]/params.bc_lam[1])/log(rc[0]/rc[NR-1]);
+    double sig0 = (1 - sqrt(rc[0]/rc[NR-1])) * sqrt(rc[NR-1]);
 
     for(i=0;i<NR;i++) {
-        lam[i] = params.bc_lam[0] * pow(rc[i]/rc[0],plaw);
+        lam[i] = params.bc_lam[1]*sqrt(rc[i])*(1 - sqrt(rc[0]/rc[i]))/sig0;
     }
 
     return;
 }
 
 void set_grid(void) {
-    rc = (double *)malloc(sizeof(double)*params.nr);
-    rmin = (double *)malloc(sizeof(double)*params.nr);
-    lam = (double *)malloc(sizeof(double)*params.nr);
+    rc = (double *)malloc(sizeof(double)*NR);
+    rmin = (double *)malloc(sizeof(double)*NR);
+    lam = (double *)malloc(sizeof(double)*NR);
+    dr  = (double *)malloc(sizeof(double)*NR);
 
+    double dlr = log(params.ro/params.ri)/((double)NR);
 
     int i;
 
-    for (i=0;i<params.nr;i++) {
-        rc[i] = exp( log(params.ri) + i*log(params.ro/params.ri)/((double) params.nr));
+    for (i=0;i<NR;i++) {
+        rc[i] = exp(log(params.ri)+i*dlr);
+        dr[i] = rc[i]*dlr;
         lam[i] = 0;
     }
-    rmin[0] = sqrt(exp( log(params.ri) - log(params.ro/params.ri)/((double) params.nr)) * rc[0]);
-    for (i=1;i<params.nr;i++) {
-        rmin[i] = sqrt(rc[i-1]*rc[i]);
+    rmin[0] = .5*(rc[0] + exp(log(params.ri)-dlr));
+    for(i=1;i<NR;i++) {
+        rmin[i] = .5*(rc[i]+rc[i-1]);
     }
 
     return;
@@ -286,15 +298,16 @@ void set_grid(void) {
 }
 
 void free_grid(void) {
-    free(rc); free(rmin); free(lam);
+    free(rc); free(rmin); free(lam); free(dr);
+    return;
 }
 
-double nu(double r) {
-    return params.nu0 * pow(r,params.gamma);
+double nu(double x) {
+    return params.nu0 * pow(x,params.gamma);
 }
 void set_params(void) {
     params.nr = 128;
-    params.alpha = .1;
+    params.alpha = .3;
     params.gamma = 0.5;
     params.h = .1;
     params.ri = 1.;
@@ -303,10 +316,9 @@ void set_params(void) {
     params.nu0 = params.alpha * params.h*params.h;
     params.mth = params.h*params.h*params.h;
     params.mvisc = sqrt(27.*M_PI/8  * params.alpha * params.mach);
-    params.tvisc = pow(params.ro,-params.gamma)/(params.alpha * params.h * params.h );
-
+    params.tvisc = params.ro*params.ro/nu(params.ro); 
     params.planet_torque = 0;
-    params.bc_lam[0] = 1e-3;
+    params.bc_lam[0] = 0;
     params.bc_lam[1] = 1.;
 
     printf("Parameters:\n\tnr = %d\n\talpha = %.1e\n\th = %.2f\n\t(ri,ro) = (%lg,%lg)\n\tMach = %.1f\n\tm_th = %.2e\n\tm_visc = %.2e\n\tt_visc=%.2e\n",
