@@ -11,7 +11,7 @@ int main(void) {
     init_lam();
 
 
-    test_matvec();
+//    test_matvec();
     double *ld = (double *)malloc(sizeof(double)*(NR-1));
     double *md = (double *)malloc(sizeof(double)*NR);
     double *ud = (double *)malloc(sizeof(double)*(NR-1));
@@ -170,7 +170,12 @@ void crank_nicholson_step(double dt,double *ld, double *md, double *ud, double *
         rp = rmin[i+1];
         am = 3*nu(rm) * (params.gamma - .5)/(2.*rm);
         ap = 3*nu(rp) * (params.gamma - .5)/(2*rp);
-           
+        
+        if (params.planet_torque == 1) {
+            am -= dTr(rm)/(M_PI*sqrt(rm));
+            ap -= dTr(rp)/(M_PI*sqrt(rp));
+        }
+
         bm = 3*nu(rm)/(rc[i]-rc[i-1]);
         bp = 3*nu(rp)/(rc[i+1]-rc[i]);
         
@@ -305,8 +310,11 @@ void free_grid(void) {
 double nu(double x) {
     return params.nu0 * pow(x,params.gamma);
 }
+double scaleH(double x) {
+    return params.h * pow(x, (params.gamma -.5)/2);
+}
 void set_params(void) {
-    params.nr = 128;
+    params.nr = 512;
     params.alpha = .3;
     params.gamma = 0.5;
     params.h = .1;
@@ -317,7 +325,7 @@ void set_params(void) {
     params.mth = params.h*params.h*params.h;
     params.mvisc = sqrt(27.*M_PI/8  * params.alpha * params.mach);
     params.tvisc = params.ro*params.ro/nu(params.ro); 
-    params.planet_torque = 0;
+    params.planet_torque = 1;
     params.bc_lam[0] = 0;
     params.bc_lam[1] = 1.;
 
@@ -344,5 +352,50 @@ void set_planet(void) {
     planet.beta = 2./3;
     planet.delta = .1;
     planet.dep = params.h;
+    planet.c = 1;
+    planet.gaussian = 1;
+    planet.onesided = 0;
+    planet.T0 = 2*M_PI*planet.a*planet.mp*planet.mp*params.mth/params.h;
     return;
 }
+
+double dTr(double x) {
+    double left_fac, right_fac, smooth_fac; 
+    double norm, xi,res;
+
+    if (planet.gaussian == 0) {
+        xi = (x-planet.a)/planet.dep;
+        left_fac = (xi-planet.beta)/planet.delta;
+        right_fac = (xi+planet.beta)/planet.delta;
+        left_fac = exp(-left_fac*left_fac);
+        right_fac = exp(-right_fac*right_fac);
+
+        norm = planet.T0/(planet.delta * sqrt(M_PI));
+
+        res = norm*( (planet.G1+1)*right_fac - left_fac);
+    }
+    else { 
+        norm = planet.a*M_PI*(planet.mp*params.mth)*(planet.mp*params.mth);
+    
+        right_fac = norm*pow(planet.a/fmax(params.h*x,fabs(x-planet.a)),4);
+    
+        left_fac = -norm*pow(x/fmax(params.h*x,fabs(x-planet.a)),4);    
+        
+        left_fac *= (1-smoothing(x,planet.a - planet.c*params.h, planet.delta));
+        right_fac *= smoothing(x, planet.a-planet.c*params.h, planet.delta)*smoothing(x,planet.a + planet.c*params.h,planet.delta);
+        
+        res = left_fac*(1-planet.onesided) + right_fac;
+
+
+    
+    }
+
+
+    return res;
+}
+
+double smoothing(double x, double x0, double w) {
+    return 0.5*(1 + tanh( (x-x0)/w));
+}
+
+

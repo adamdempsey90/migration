@@ -51,6 +51,7 @@ Print["UseGaussian = ", UseGaussian]
 nr = ToExpression[$ScriptCommandLine[[19]]];
 Print["nr = ", nr]
 
+OneSided = ToExpression[$ScriptCommandLine[[20]]];
 
 UseTorque = Mod[1+UseGaussian,2]
 Print["UseTorque =", UseTorque]
@@ -67,45 +68,19 @@ Print["q = " ,q]
 
 
 
-\[Alpha]disk[x_, 
-  rout_] := \[Lambda]i + (\[Lambda]o - \[Lambda]i) (x/nu[x] - 
-        ri/nu[ri])/(rout/nu[rout] - ri/nu[ri]) 
-        \[Alpha]disk2[x_, lamin_, lamout_, rin_, rout_] := 
-         lamin + (lamout - 
-              lamin) (x/nu[x] - rin/nu[rin])/(rout/nu[rout] - rin/nu[rin])
-              nu[x_] := \[Alpha] h^2 x^\[Gamma]
-              vrn[x_, rout_] := -1.5 (\[Lambda]o - \[Lambda]i)/(rout/nu[rout] - 
-                    ri/nu[ri]) /\[Alpha]disk[x, rout]
-                    \[Xi][x_] := (x - a)/q
-                    Func[x_] := 
-                     T0 *((\[CapitalGamma] + 
-                             1) Exp[-((\[Xi][x] - \[Beta])/\[CapitalDelta])^2] - 
-                                  Exp[-((\[Xi][
-                                               x] + \[Beta])/\[CapitalDelta])^2])/(\[CapitalDelta] Sqrt[
-                                                     Pi])
-                                                     s[x_, x0_, w_] := .5 (1 + Tanh[(x - x0)/w])
-                                                     \[CapitalLambda]L[x_, f_, c_] := -f Pi (\[Mu] h^3)^2 (x/(x - a))^4
-                                                     \[CapitalLambda]R[x_, f_, c_] := f Pi (\[Mu] h^3)^2 (x/(x - a))^4 
-                                                     \[CapitalLambda][x_, f_, c_] := 
-                                                      Piecewise[{{- f Pi (\[Mu] h^3)^2 (x/(x - a))^4, x < (a - c rh)}, {0, 
-                                                          a - c rh <= x <= a + c rh}, {f Pi (\[Mu] h^3)^2 (x/(x - a))^4, 
-                                                              x > (a + c rh)}}]
-                                                              \[CapitalLambda]smooth[x_, f_, c_, 
-                                                                w_] := (1 - s[x, a - c rh, w]) \[CapitalLambda]L[x, f, c]  + 
-                                                                  s[x, a - c rh, w] s[x, a + c rh, w] \[CapitalLambda]R[x, f, c]
+nu[x_]:= \[Alpha] h^2 x^\[Gamma]
 \[Alpha]disk[x_,rout_]:=\[Lambda]i + (\[Lambda]o-\[Lambda]i) (x/nu[x] - ri/nu[ri])/(rout/nu[rout]-ri/nu[ri]) 
 \[Alpha]disk2[x_,lamin_,lamout_,rin_,rout_]:=lamin+ (lamout-lamin) (x/nu[x] - rin/nu[rin])/(rout/nu[rout]-rin/nu[rin])
-nu[x_]:= \[Alpha] h^2 x^\[Gamma]
 vrn[x_,rout_]:= -1.5 (\[Lambda]o-\[Lambda]i)/(rout/nu[rout]-ri/nu[ri]) /\[Alpha]disk[x,rout]
 \[Xi][x_]:= (x-a)/q
-Func[x_]:= T0 *((\[CapitalGamma]+1)Exp[-((\[Xi][x]-\[Beta])/\[CapitalDelta])^2] -Exp[-((\[Xi][x]+\[Beta])/\[CapitalDelta])^2])/(\[CapitalDelta] Sqrt[Pi])
+Func[x_]:= T0 *((\[CapitalGamma]+1)Exp[-((\[Xi][x]-\[Beta])/\[CapitalDelta])^2] - (1-OneSided) Exp[-((\[Xi][x]+\[Beta])/\[CapitalDelta])^2])/(\[CapitalDelta] Sqrt[Pi])
 s[x_,x0_,w_]:= .5(1 + Tanh[(x-x0)/w])
 \[CapitalLambda]L[x_,f_,c_]:= Piecewise[{{-f a Pi (\[Mu] h^3)^2 (x/(Max[h x, Abs[x-a]]))^4,x<a},{0,x>=a}}]
 \[CapitalLambda]R[x_,f_,c_]:= Piecewise[{{f a  Pi (\[Mu] h^3)^2 (a/(Max[h x, Abs[x-a]]))^4,x>a} ,{0,x<=a}}]
 \[CapitalLambda][x_,f_,c_]:=Piecewise[{{- f Pi (\[Mu] h^3)^2 (x/(x-a))^4,x<(a-c rh)},{0,a-c rh <= x<= a+c rh},{f Pi (\[Mu] h^3)^2 (x/(x-a))^4,x>(a+c rh)}}]
-\[CapitalLambda]smooth[x_,f_,c_,w_]:=(1-s[x,a-c h x,w])\[CapitalLambda]L[x,f,c]  + s[x,a-c h x,w] s[x,a + c h x,w] \[CapitalLambda]R[x,f,c]
-
-sol=NDSolve[ {3 nu[r] \[Lambda]'[r] + \[Lambda][r](3 nu[r](\[Gamma]-.5)/r - PlanetFlag  (UseGaussian Func[r] + UseTorque \[CapitalLambda]smooth[r,\[CapitalLambda]f,\[CapitalLambda]c,\[CapitalLambda]w]) /(Pi  Sqrt[r])) == m[r],m'[r]== 0,\[Lambda][ri]== \[Lambda]i,\[Lambda][ro]== \[Lambda]o},{\[Lambda],m},{r,ri,ro}];
+\[CapitalLambda]smooth[x_,f_,c_,w_]:=(1-s[x,a-c h x,w])\[CapitalLambda]L[x,f,c] (1-OneSided)  + s[x,a-c h x,w] s[x,a + c h x,w] \[CapitalLambda]R[x,f,c]
+Torque[x_,f_,c_,w_]:= UseGaussian Func[x] + UseTorque \[CapitalLambda]smooth[x,f,c,w]
+sol=NDSolve[ {3 nu[r] \[Lambda]'[r] + \[Lambda][r](3 nu[r](\[Gamma]-.5)/r - PlanetFlag  Torque[r,\[CapitalLambda]f,\[CapitalLambda]c,\[CapitalLambda]w] /(Pi  Sqrt[r])) == m[r],m'[r]== 0,\[Lambda][ri]== \[Lambda]i,\[Lambda][ro]== \[Lambda]o},{\[Lambda],m},{r,ri,ro}];
 
 
 rvals = Table[ ri + 1. (i-1) (ro-ri)/(nr-1),{i,1,nr}] 
@@ -113,7 +88,7 @@ lamfinal = Table[\[Lambda][rvals[[i]]] /. sol,{i,1,nr}]
 
 mdotfinal = m[ri] /. sol
 
-dTr = Table[ UseGaussian Func[rvals[[i]]] + UseTorque \[CapitalLambda]smooth[rvals[[i]],\[CapitalLambda]f,\[CapitalLambda]c,\[CapitalLambda]w],{i,1,nr}]
+dTr = Table[ Torque[rvals[[i]],\[CapitalLambda]f,\[CapitalLambda]c,\[CapitalLambda]w],{i,1,nr}]
 
 
 dat = Table[{rvals[[i]],lamfinal[[i]][[1]],-mdotfinal[[1]]/(lamfinal[[i]][[1]]),dTr[[i]]},{i,1,nr}]

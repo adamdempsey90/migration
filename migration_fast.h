@@ -17,6 +17,9 @@ typedef struct Parameters {
 typedef struct Planet {
     double a, omp, delta, G1, beta, mp;
     double rh, dep;
+    double c;
+    int onesided,gaussian;
+    double T0;
 } Planet;
 
 
@@ -31,8 +34,11 @@ void set_planet(void);
 void set_grid(void);
 void free_grid(void);
 double nu(double);
+double scaleH(double);
 void init_lam(void);
 void matvec(double *, double *, double *, double *, double *, int);
 void trisolve(double *, double *, double *, double *, double *,int);
 void crank_nicholson_step(double, double *, double *, double *, double *);
 void test_matvec(void);
+double smoothing(double,double,double);
+double dTr(double);
