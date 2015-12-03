@@ -208,14 +208,23 @@ class Simulation():
         return self.calc_mdot(lam,rc,curr_a)/(-lam)
 
     def Tfunc(self,rc,curr_a):
-        xv = (rc-curr_a)/self.dep
-        norm = self.delta*sqrt(pi)
-        fac1 = (xv-self.beta)/self.delta
-        fac2 = (xv+self.beta)/self.delta
-        res = (self.G1+1)*exp(-fac1**2) - exp(-fac2**2)
+        if self.gaussian:
+            xv = (rc-curr_a)/self.dep
+            norm = self.delta*sqrt(pi)
+            fac1 = (xv-self.beta)/self.delta
+            fac2 = (xv+self.beta)/self.delta
+            res = (self.G1+1)*exp(-fac1**2) - exp(-fac2**2)
     #    sigp = interp(sigma,planet_a)
-        Tnorm = 2*pi * curr_a*self.mp**2 *self.mach*self.mth
-        return Tnorm*res/norm * int(self.planet_torque)
+            Tnorm = 2*pi * curr_a*self.mp**2 *self.mach*self.mth
+            return Tnorm*res/norm * int(self.planet_torque)
+        else:
+            fac = maximum(self.h*rc,abs(rc-curr_a))
+            norm = curr_a*pi*(self.mp*self.mth)**2;
+            right_fac = norm*(curr_a/fac)**4
+            left_fac = -norm*(rc/fac)**4
+            left_fac *= (1 - self.smoothing(rc,curr_a-self.c*self.h)
+    def smoothing(self,x,x0,w):
+        return 0.5*(1 + tanh((x-x0)/w))
 
     def nu(self,rc):
         return self.alpha* self.h**2 * rc**self.gamma

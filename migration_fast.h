@@ -25,6 +25,7 @@ typedef struct Planet {
 
 double *rc, *rmin, *lam, *dr;
 double *mass, *ones;
+
 Parameters params;
 Planet planet; 
 

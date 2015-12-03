@@ -36,7 +36,7 @@ int main(void) {
     int nt = (int)(t_end/dt)+1;
     double *times = (double *)malloc(sizeof(double)*nt);
     double *sol = (double *)malloc(sizeof(double)*NR*nt);
-    
+ 
     for(i=0;i<NR*nt;i++) sol[i] = 0;
     for(i=0;i<NR;i++) {
         sol[i] = lam[i];
@@ -283,7 +283,6 @@ void set_grid(void) {
     rmin = (double *)malloc(sizeof(double)*NR);
     lam = (double *)malloc(sizeof(double)*NR);
     dr  = (double *)malloc(sizeof(double)*NR);
-
     double dlr = log(params.ro/params.ri)/((double)NR);
 
     int i;
@@ -304,7 +303,7 @@ void set_grid(void) {
 
 void free_grid(void) {
     free(rc); free(rmin); free(lam); free(dr);
-    return;
+     return;
 }
 
 double nu(double x) {
@@ -390,12 +389,27 @@ double dTr(double x) {
     
     }
 
-
     return res;
 }
 
 double smoothing(double x, double x0, double w) {
     return 0.5*(1 + tanh( (x-x0)/w));
 }
+
+
+double calc_drift_speed(void) {
+    int i;
+    double res, ans;
+    
+    res = 0;
+
+    for(i=0;i<NR;i++) {
+        res += dTr(r[i])*lam[i]/r[i];
+
+    }
+
+
+}
+
 
 
