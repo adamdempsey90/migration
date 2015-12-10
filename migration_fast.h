@@ -3,29 +3,31 @@
 #include <math.h>
 
 #define NR params.nr
-
+#define TRUE 1
+#define FALSE 0 
 
 typedef struct Parameters {
     double alpha,h,ri,ro,gamma, mach, mth, mvisc, tvisc; 
     double nu0;
-    int nr;
-    int planet_torque;
+    int nr,nt;
+    double dt,nvisc;
+    int planet_torque, move_planet;
     double bc_lam[2];
 } Parameters;
 
 
 typedef struct Planet {
-    double a, omp, delta, G1, beta, mp;
+    double a, omp, delta, G1, beta, mp,vs;
     double rh, dep;
-    double c;
+    double c,eps;
     int onesided,gaussian;
     double T0;
 } Planet;
 
 
 double *rc, *rmin, *lam, *dr;
-double *mass, *ones;
-
+double *mass, *ones, *mdot;
+double dlr;
 Parameters params;
 Planet planet; 
 
@@ -43,3 +45,7 @@ void crank_nicholson_step(double, double *, double *, double *, double *);
 void test_matvec(void);
 double smoothing(double,double,double);
 double dTr(double);
+void move_planet(double);
+double calc_drift_speed(void);
+void calc_coeffs(double, double,double *, double *,int);
+void set_mdot(int);

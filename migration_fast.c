@@ -31,34 +31,77 @@ int main(void) {
     double total_mass = 0;
     for(i=0;i<NR;i++) total_mass += dr[i]*lam[i];
 
-    double t_end = 1e4;
-    double dt = 100;
-    int nt = (int)(t_end/dt)+1;
+    double t_end = params.nvisc * params.tvisc;
+    double dt = params.dt;
+    int nt = params.nt;
     double *times = (double *)malloc(sizeof(double)*nt);
+    double *avals = (double *)malloc(sizeof(double)*nt);
+    double *vs = (double *)malloc(sizeof(double)*nt);
     double *sol = (double *)malloc(sizeof(double)*NR*nt);
- 
-    for(i=0;i<NR*nt;i++) sol[i] = 0;
+    double *sol_mdot = (double *)malloc(sizeof(double)*NR*nt);
+    double *torque = (double *)malloc(sizeof(double)*NR);
+    double *lami = (double *)malloc(sizeof(double)*NR);
+    double *mdoti = (double *)malloc(sizeof(double)*NR);
+
+    avals[0] = planet.a; vs[0] = planet.vs;
+
+    for(i=0;i<NR*nt;i++) {
+        sol[i] = 0;
+        sol_mdot[i] = 0;
+    }
     for(i=0;i<NR;i++) {
-        sol[i] = lam[i];
+        lami[i] = lam[i];
+        mdoti[i] = mdot[i];
+    }
+
+    for(i=0;i<NR;i++) {
+        torque[i] = dTr(rc[i]);
     }
 
     for(i=0;i<nt;i++) {
-        times[i] = i * t_end /((double) nt);
+        times[i] = pow(10,i * log10(params.nvisc*params.tvisc) /((double) nt));
     }
 
+    printf("Viscous time is %.1e...\n", params.tvisc); 
     printf("Starting Integration...\n");
-    for(i=1;i<nt;i++) {
+    double t = 0;
+    for(i=0;i<nt;i++) {
         //printf("t = %.2f\n", times[i]);
-        crank_nicholson_step(dt,ld,md,ud,fm);
-        
+        while (t < times[i]) {
+            if (times[i] - t < dt) {
+                crank_nicholson_step(times[i]-t,ld,md,ud,fm);
+                if (params.move_planet == TRUE) {
+                    move_planet(times[i] - t); 
+                }
+                t = times[i];
+            }
+            else {
+                crank_nicholson_step(dt,ld,md,ud,fm);
+                if (params.move_planet == TRUE) {
+                    move_planet(dt); 
+                }
+                t += dt;
+            }
+        }
+
+        set_mdot(TRUE);     
+        avals[i] = planet.a;
+        vs[i] = planet.vs;
         for(j=0;j<NR;j++) {
             sol[j + NR*i] = lam[j];
+            sol_mdot[j + NR*i] = mdot[j];
         }
     
     }
     
     printf("Outputting results...\n");
     FILE *fname = fopen("results.dat","w");
+    FILE *pname = fopen("planet.dat","w");
+    for(i=0; i<nt; i++) {
+        fprintf(pname, "%.12g\t%.12g\t%.12g\n",times[i],avals[i],vs[i]);
+    }
+    fclose(pname);
+    
     fprintf(fname, "%d",NR);
     for(j=0;j<NR;j++) {
         fprintf(fname, "\t%lg",rc[j]);
@@ -74,7 +117,23 @@ int main(void) {
         fprintf(fname, "\t%lg",dr[j]);
     }
     fprintf(fname,"\n");
+    fprintf(fname,"%lg",params.tvisc);
+    for(j=0;j<NR;j++) {
+        fprintf(fname, "\t%lg",torque[j]);
+    }
+    fprintf(fname,"\n");
 
+    fprintf(fname, "%lg",params.bc_lam[0]);
+    for(j=0;j<NR;j++) {
+        fprintf(fname,"\t%lg",lami[j]);
+    }
+    fprintf(fname,"\n");
+
+    fprintf(fname, "%lg",params.bc_lam[1]);
+    for(j=0;j<NR;j++) {
+        fprintf(fname,"\t%lg",mdoti[j]);
+    }
+    fprintf(fname,"\n");
 
     for(i=0;i<nt;i++) {
         fprintf(fname,"%lg",times[i]);
@@ -83,11 +142,21 @@ int main(void) {
         }
         fprintf(fname,"\n");
     }
+    for(i=0;i<nt;i++) {
+        fprintf(fname,"-1");
+        for(j=0;j<NR;j++) {
+            fprintf(fname,"\t%lg",sol_mdot[j+NR*i]);
+        }
+        fprintf(fname,"\n");
+    }
 
     printf("Cleaning up...\n");
     fclose(fname);
 
-    free(times); free(sol);
+    free(lami); free(mdoti);
+    free(times); free(sol); free(avals); free(vs);
+    free(sol_mdot);
+    free(torque);
     free(ld); free(md); free(ud);free(fm);
     free_grid();
     return 1;
@@ -152,6 +221,18 @@ matvec(ld,md,ud,c,a,10);
 }
 
 
+void calc_coeffs(double x, double dx,double *a, double *b,int planet_torque) {
+    // dx = rc[i]-rc[i-1] or rc[i+1] - rc[i] or dr[i]
+    *a = 3*nu(x) * (params.gamma - .5)/(2*x);
+    *b = 3*nu(x)/(dx);
+
+    if (planet_torque == TRUE) {
+        *a -= dTr(x)/(M_PI * sqrt(x));
+    }
+    return;
+}
+
+
 void crank_nicholson_step(double dt,double *ld, double *md, double *ud, double *fm) {
     int i;
     double ap,am, bm,bp, rm, rp;
@@ -168,17 +249,21 @@ void crank_nicholson_step(double dt,double *ld, double *md, double *ud, double *
     for(i=1;i<NR-1;i++) {
         rm = rmin[i];
         rp = rmin[i+1];
+
+        calc_coeffs(rm,rc[i]-rc[i-1],&am,&bm,params.planet_torque);
+        calc_coeffs(rp,rc[i+1]-rc[i],&ap,&bp,params.planet_torque);
+/*
         am = 3*nu(rm) * (params.gamma - .5)/(2.*rm);
         ap = 3*nu(rp) * (params.gamma - .5)/(2*rp);
         
-        if (params.planet_torque == 1) {
+        if (params.planet_torque == TRUE) {
             am -= dTr(rm)/(M_PI*sqrt(rm));
             ap -= dTr(rp)/(M_PI*sqrt(rp));
         }
 
         bm = 3*nu(rm)/(rc[i]-rc[i-1]);
         bp = 3*nu(rp)/(rc[i+1]-rc[i]);
-        
+*/        
         //printf("%lg\t%lg\t%lg\t%lg\t%lg\n",rc[i],am,ap,bm,bp);
 
         md[i] = (ap-am - bm - bp)*dt/2.;
@@ -202,6 +287,8 @@ void crank_nicholson_step(double dt,double *ld, double *md, double *ud, double *
     fm[0] = params.bc_lam[0];
     fm[NR-1] = params.bc_lam[1];
 
+
+#ifdef WRITE_MATRIX
     FILE *fname = fopen("matrix.dat","w");
 
     for(i=0;i<NR;i++) {
@@ -221,7 +308,7 @@ void crank_nicholson_step(double dt,double *ld, double *md, double *ud, double *
     }
     fprintf(fname,"\n");
     fclose(fname);
-
+#endif
     trisolve(ld,md,ud,fm,lam,NR);
 
 
@@ -274,7 +361,7 @@ void init_lam(void) {
     for(i=0;i<NR;i++) {
         lam[i] = params.bc_lam[1]*sqrt(rc[i])*(1 - sqrt(rc[0]/rc[i]))/sig0;
     }
-
+    set_mdot(FALSE);
     return;
 }
 
@@ -282,8 +369,9 @@ void set_grid(void) {
     rc = (double *)malloc(sizeof(double)*NR);
     rmin = (double *)malloc(sizeof(double)*NR);
     lam = (double *)malloc(sizeof(double)*NR);
+    mdot = (double *)malloc(sizeof(double)*NR);
     dr  = (double *)malloc(sizeof(double)*NR);
-    double dlr = log(params.ro/params.ri)/((double)NR);
+    dlr = log(params.ro/params.ri)/((double)NR);
 
     int i;
 
@@ -303,6 +391,7 @@ void set_grid(void) {
 
 void free_grid(void) {
     free(rc); free(rmin); free(lam); free(dr);
+    free(mdot);
      return;
 }
 
@@ -310,23 +399,27 @@ double nu(double x) {
     return params.nu0 * pow(x,params.gamma);
 }
 double scaleH(double x) {
-    return params.h * pow(x, (params.gamma -.5)/2);
+    return params.h * x *  pow(x, (params.gamma -.5)/2);
 }
 void set_params(void) {
     params.nr = 512;
-    params.alpha = .3;
+    params.alpha = .1;
     params.gamma = 0.5;
     params.h = .1;
-    params.ri = 1.;
-    params.ro = 50.;
+    params.ri = .1;
+    params.ro = 30.;
+    params.dt = 10;
+    params.nvisc = 5;
+    params.nt = 1e3;
     params.mach = 1/params.h;
     params.nu0 = params.alpha * params.h*params.h;
     params.mth = params.h*params.h*params.h;
     params.mvisc = sqrt(27.*M_PI/8  * params.alpha * params.mach);
     params.tvisc = params.ro*params.ro/nu(params.ro); 
-    params.planet_torque = 1;
+    params.planet_torque = TRUE;
+    params.move_planet = FALSE;
     params.bc_lam[0] = 0;
-    params.bc_lam[1] = 1.;
+    params.bc_lam[1] = 1e-2;
 
     printf("Parameters:\n\tnr = %d\n\talpha = %.1e\n\th = %.2f\n\t(ri,ro) = (%lg,%lg)\n\tMach = %.1f\n\tm_th = %.2e\n\tm_visc = %.2e\n\tt_visc=%.2e\n",
             params.nr,
@@ -344,17 +437,19 @@ void set_params(void) {
 
 void set_planet(void) {
     planet.a  = 10.;
-    planet.mp = 1.;
+    planet.mp = 1;
     planet.rh = pow( planet.mp * params.mth/3.,1./3) * planet.a;
     planet.omp = pow(planet.a,-1.5);
     planet.G1 = 0;
     planet.beta = 2./3;
     planet.delta = .1;
-    planet.dep = params.h;
-    planet.c = 1;
-    planet.gaussian = 1;
+    planet.dep = params.h*planet.a;
+    planet.c = 2./3;
+    planet.eps = 1;
+    planet.gaussian = FALSE;
     planet.onesided = 0;
     planet.T0 = 2*M_PI*planet.a*planet.mp*planet.mp*params.mth/params.h;
+    planet.vs = 0;
     return;
 }
 
@@ -362,7 +457,7 @@ double dTr(double x) {
     double left_fac, right_fac, smooth_fac; 
     double norm, xi,res;
 
-    if (planet.gaussian == 0) {
+    if (planet.gaussian == TRUE) {
         xi = (x-planet.a)/planet.dep;
         left_fac = (xi-planet.beta)/planet.delta;
         right_fac = (xi+planet.beta)/planet.delta;
@@ -373,15 +468,18 @@ double dTr(double x) {
 
         res = norm*( (planet.G1+1)*right_fac - left_fac);
     }
-    else { 
-        norm = planet.a*M_PI*(planet.mp*params.mth)*(planet.mp*params.mth);
+    else {
+        xi = (x-planet.a) / scaleH(x);
+
+
+        norm = planet.eps * planet.a*M_PI*(planet.mp*params.mth)*(planet.mp*params.mth);
     
-        right_fac = norm*pow(planet.a/fmax(params.h*x,fabs(x-planet.a)),4);
+        right_fac = norm*pow(planet.a/fmax(scaleH(x),fabs(x-planet.a)),4);
     
-        left_fac = -norm*pow(x/fmax(params.h*x,fabs(x-planet.a)),4);    
+        left_fac = -norm*pow(x/fmax(scaleH(x),fabs(x-planet.a)),4);    
         
-        left_fac *= (1-smoothing(x,planet.a - planet.c*params.h, planet.delta));
-        right_fac *= smoothing(x, planet.a-planet.c*params.h, planet.delta)*smoothing(x,planet.a + planet.c*params.h,planet.delta);
+        left_fac *= (1-smoothing(xi, -planet.c, planet.delta));
+        right_fac *= smoothing(xi,-planet.c, planet.delta)*smoothing(xi,planet.c,planet.delta);
         
         res = left_fac*(1-planet.onesided) + right_fac;
 
@@ -404,12 +502,41 @@ double calc_drift_speed(void) {
     res = 0;
 
     for(i=0;i<NR;i++) {
-        res += dTr(r[i])*lam[i]/r[i];
-
+        res += dr[i]*dTr(rc[i])*lam[i]/rc[i];
     }
 
+    res *= -2*sqrt(planet.a)/(planet.mp*params.mth);
+
+    return res;
 
 }
 
+void move_planet(double dt) {
+
+    planet.vs = calc_drift_speed();
+    planet.a += dt*planet.vs;
+
+    return;
+}
+
+void set_mdot(int planet_torque) {
+    int i;
+    double ca, cb;
+   
+    
+    calc_coeffs(rmin[0], rc[i]-rc[i-1], &ca, &cb,planet_torque);
+    mdot[0] = ca * lam[0] + cb * (lam[0] - params.bc_lam[0]);
 
 
+
+    for(i=1;i<NR;i++) {
+        calc_coeffs(rmin[i], rc[i]-rc[i-1], &ca, &cb,planet_torque);
+        mdot[i] = ca * lam[i] + cb * (lam[i] - lam[i-1]);
+    }
+
+/*    
+    calc_coeffs(rmin[NR-1], rc[NR-1]-rc[NR-2], &ca, &cb,planet_torque);
+    mdot[NR-1] = ca * lam[NR-1] + cb  * (params.bc_lam[1] - lam[NR-2]);
+*/
+    return;
+}
