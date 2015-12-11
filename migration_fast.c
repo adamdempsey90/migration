@@ -8,8 +8,12 @@ int main(void) {
     printf("Setting up grid...\n");
     set_grid();
     printf("Initializing lambda...\n");
-    init_lam();
-
+    if (params.read_initial_conditions == TRUE) {
+        init_lam_from_file();
+    }
+    else {
+        init_lam();
+    }
 
 //    test_matvec();
     double *ld = (double *)malloc(sizeof(double)*(NR-1));
@@ -70,21 +74,21 @@ int main(void) {
         while (t < times[i]) {
             if (times[i] - t < dt) {
                 crank_nicholson_step(times[i]-t,ld,md,ud,fm);
-                if (params.move_planet == TRUE) {
-                    move_planet(times[i] - t); 
+                if ((params.move_planet == TRUE) && (t >= params.release_time)) {
+                    move_planet(times[i] - t, lam, &planet.a, &planet.vs); 
                 }
                 t = times[i];
             }
             else {
                 crank_nicholson_step(dt,ld,md,ud,fm);
-                if (params.move_planet == TRUE) {
-                    move_planet(dt); 
+                if ((params.move_planet == TRUE) && (t >= params.release_time)) {
+                    move_planet(dt,lam,&planet.a,&planet.vs); 
                 }
                 t += dt;
             }
         }
 
-        set_mdot(TRUE);     
+        set_mdot(params.planet_torque);     
         avals[i] = planet.a;
         vs[i] = planet.vs;
         for(j=0;j<NR;j++) {
@@ -351,16 +355,50 @@ void trisolve(double *ld, double *md, double *ud, double *d,double *sol,int n) {
     return;
 }
 
+void init_lam_from_file(void) {
+    FILE *f = fopen("lambda_init.dat","r");
 
+    double x,temp;
+    int i=0;
+    while (fscanf(f,"%lg\t%lg\n",&x,&temp) != EOF) {
+          if (fabs(x -rc[i]) < 1e-4) {
+                 lam[i] = temp;
+          }
+          else {
+             printf("Grid is not the same! %.12e\t%.12lg\t.12%lg\n", fabs(x-rc[i]),rc[i],x);
+          }
+        i++;
+    }
+ 
+    fclose(f);
+
+    return;
+
+}
 
 void init_lam(void) {
     int i;
 //    double plaw = log(params.bc_lam[0]/params.bc_lam[1])/log(rc[0]/rc[NR-1]);
-    double sig0 = (1 - sqrt(rc[0]/rc[NR-1])) * sqrt(rc[NR-1]);
 
+    double mdot0 = 1.5*params.nu0 * (params.bc_lam[1]*pow(params.ro,params.gamma - .5) - params.bc_lam[0]*pow(params.ri,params.gamma-.5))/(sqrt(params.ro)-sqrt(params.ri));
+    double sig0 = 2*mdot0/(3*params.nu0);
+    double x;
     for(i=0;i<NR;i++) {
-        lam[i] = params.bc_lam[1]*sqrt(rc[i])*(1 - sqrt(rc[0]/rc[i]))/sig0;
+        x = rc[i]/params.ri;
+        lam[i] = params.bc_lam[0]*pow(x,.5-params.gamma) + sig0*pow(rc[i],1-params.gamma)*(1-sqrt(1/x));
     }
+
+#ifdef INITIAL_NOISE
+    double locs[7] = {.1,.6, 2, 5, 9, 20 , 30};
+    int nlocs = 7; 
+    int j;
+    for(i=0;i<NR;i++) {
+        for(j=0;j<nlocs;j++) {
+            lam[i] += params.bc_lam[1] * exp( -(rc[i]-locs[j])*(rc[i]-locs[j])/.2);
+        }
+    }
+#endif
+
     set_mdot(FALSE);
     return;
 }
@@ -385,6 +423,7 @@ void set_grid(void) {
         rmin[i] = .5*(rc[i]+rc[i-1]);
     }
 
+    set_mdot(params.planet_torque);
     return;
 
 }
@@ -406,10 +445,10 @@ void set_params(void) {
     params.alpha = .1;
     params.gamma = 0.5;
     params.h = .1;
-    params.ri = .1;
+    params.ri = .05;
     params.ro = 30.;
-    params.dt = 10;
-    params.nvisc = 5;
+    params.dt = .1;
+    params.nvisc = .1;
     params.nt = 1e3;
     params.mach = 1/params.h;
     params.nu0 = params.alpha * params.h*params.h;
@@ -417,9 +456,11 @@ void set_params(void) {
     params.mvisc = sqrt(27.*M_PI/8  * params.alpha * params.mach);
     params.tvisc = params.ro*params.ro/nu(params.ro); 
     params.planet_torque = TRUE;
-    params.move_planet = FALSE;
+    params.move_planet = TRUE;
+    params.read_initial_conditions = TRUE;
     params.bc_lam[0] = 0;
     params.bc_lam[1] = 1e-2;
+    params.release_time = 0;
 
     printf("Parameters:\n\tnr = %d\n\talpha = %.1e\n\th = %.2f\n\t(ri,ro) = (%lg,%lg)\n\tMach = %.1f\n\tm_th = %.2e\n\tm_visc = %.2e\n\tt_visc=%.2e\n",
             params.nr,
@@ -436,7 +477,7 @@ void set_params(void) {
 }
 
 void set_planet(void) {
-    planet.a  = 10.;
+    planet.a  = 20.;
     planet.mp = 1;
     planet.rh = pow( planet.mp * params.mth/3.,1./3) * planet.a;
     planet.omp = pow(planet.a,-1.5);
@@ -495,26 +536,26 @@ double smoothing(double x, double x0, double w) {
 }
 
 
-double calc_drift_speed(void) {
+double calc_drift_speed(double a, double *y) {
     int i;
-    double res, ans;
+    double res = 0;
     
-    res = 0;
 
     for(i=0;i<NR;i++) {
-        res += dr[i]*dTr(rc[i])*lam[i]/rc[i];
+        res += dTr(rc[i])*y[i];
     }
 
-    res *= -2*sqrt(planet.a)/(planet.mp*params.mth);
+    res *= -2*dlr*sqrt(a)/(planet.mp*params.mth);
 
     return res;
 
 }
 
-void move_planet(double dt) {
-
-    planet.vs = calc_drift_speed();
+void move_planet(double dt, double *y, double *vs, double *a) {
+    
+    *vs = calc_drift_speed(*a,y);
     planet.a += dt*planet.vs;
+    *a += dt*(*vs);
 
     return;
 }
@@ -523,7 +564,7 @@ void set_mdot(int planet_torque) {
     int i;
     double ca, cb;
    
-    
+    i = 0; 
     calc_coeffs(rmin[0], rc[i]-rc[i-1], &ca, &cb,planet_torque);
     mdot[0] = ca * lam[0] + cb * (lam[0] - params.bc_lam[0]);
 
@@ -540,3 +581,55 @@ void set_mdot(int planet_torque) {
 */
     return;
 }
+
+/*
+void move_planet_implicit(double dt) {
+    double vs = calc_drift_speed();
+    double rhs = planet.a + .5*dt * vs;
+    double args[2] = {dt,rhs};
+    double a_old = planet.a;
+    tol = 1e-4;
+    planet.a = secant_method(&planet_zero_function,a_old, .5*a_old,tol,args)
+    
+
+
+}
+
+double secant_method(double (*func)(double, double[]), double x2, double x1, double tol,double args[]) {
+    int i;
+    int MAXITERATIONS = 300;
+    double f1, f2, temp;
+    f1 = (*func)(x1,args);
+    for(i=0;i<MAXITERATIONS;i++) {
+        f2 = (*func)(x2,args);
+        if (f1-f2 <= tol) {
+            printf("f1-f2 < tol:%lg\t%lg\t%lg\t%lg\n",x1,x2,f1,f2);
+            break;
+        }
+        
+        temp = x1;
+        x1 -= f1 * (x1 - x2)/(f1-f2);
+
+        if  ( fabs(x1-x2) <= tol) {
+            break;
+        }
+        x2 = temp;
+        f1 = f2;
+
+    }
+        
+    return x1;
+}
+
+
+double  planet_zero_function(double a, double args[2]) {
+    planet.a = a;
+    double dt = args[0];
+    double vs;
+    double rhs = args[1];
+    crank_nicholson_step(dt);
+    vs = calc_drift_speed();
+    double lhs =  a - .5*dt*vs;
+    return lhs - rhs;
+}
+*/

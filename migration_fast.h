@@ -6,13 +6,17 @@
 #define TRUE 1
 #define FALSE 0 
 
+//#define INITIAL_NOISE
+
 typedef struct Parameters {
     double alpha,h,ri,ro,gamma, mach, mth, mvisc, tvisc; 
     double nu0;
     int nr,nt;
     double dt,nvisc;
     int planet_torque, move_planet;
+    int read_initial_conditions;
     double bc_lam[2];
+    double release_time;
 } Parameters;
 
 
@@ -45,7 +49,8 @@ void crank_nicholson_step(double, double *, double *, double *, double *);
 void test_matvec(void);
 double smoothing(double,double,double);
 double dTr(double);
-void move_planet(double);
-double calc_drift_speed(void);
+void move_planet(double,double *, double *, double *);
+double calc_drift_speed(double,double *);
 void calc_coeffs(double, double,double *, double *,int);
 void set_mdot(int);
+void init_lam_from_file(void);

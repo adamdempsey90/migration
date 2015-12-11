@@ -30,7 +30,7 @@ class Sim():
             self.lamp[:,i] = (self.lams[:,i]-self.lam0)/self.lam0
 
 
-    def animate(self,tend,skip,tstart=0,q='lam'):
+    def animate(self,tend,skip,tstart=0,q='lam',logx = True,logy=True):
         fig=plt.figure()
         ax=fig.add_subplot(111)
         inds = (self.t <= tend)&(self.t >= tstart)
@@ -38,13 +38,18 @@ class Sim():
 
         if q == 'lam':
             ax.set_ylabel('$\\lambda$',fontsize=20)
-            line, = ax.loglog(self.rc,self.lam0)
-            ax.loglog(self.rc,self.lam0,'--k')
+            line, = ax.plot(self.rc,self.lam0)
+            linep, = ax.plot(self.at[0],self.lam0[self.rc>=self.at[0]][0],'o',markersize=10)
+            ax.plot(self.rc,self.lam0,'--k')
             dat = self.lams[:,inds]
             dat = dat[:,::skip]
+            if logy:
+                ax.set_yscale('log')
         elif q == 'mdot':
             ax.set_ylabel('$\\dot{M}$',fontsize=20)
-            line, = ax.semilogx(self.rc,self.mdot0/self.mdot0)
+            line, = ax.plot(self.rc,self.mdot0/self.mdot0)
+            linep, = ax.plot(self.at[0],1,'o',markersize=10)
+
             ax.axhline(1,color='k',linestyle='--')
             dat = self.mdots[:,inds]
             dat = dat[:,::skip]
@@ -54,13 +59,18 @@ class Sim():
             print  'q=%s is not a valid option' % q
             return
 
+        if logx:
+            ax.set_xscale('log')
         ax.set_ylim((dat.min(),dat.max()))
 
         times = self.t[inds][::skip]
 
+        avals = self.at[inds][::skip]
 
         for i,t in enumerate(times):
             line.set_ydata(dat[:,i])
+            linep.set_xdata(avals[i])
+            linep.set_ydata(dat[:,i][self.rc>=avals[i]][0])
             ax.set_title('t = %.2e viscous times' % (t/self.tvisc))
             fig.canvas.draw()
 
@@ -78,3 +88,9 @@ class Sim():
 
         fig.canvas.draw()
         return axes,fig
+    def write_lam_to_file(self,r,lam):
+        with open("lambda_init.dat","w") as f:
+            lines = ["%.12g\t%.12g" %(x,l) for x,l in zip(r,lam)]
+            f.write('\n'.join(lines))
+
+
