@@ -75,14 +75,14 @@ int main(void) {
             if (times[i] - t < dt) {
                 crank_nicholson_step(times[i]-t,ld,md,ud,fm);
                 if ((params.move_planet == TRUE) && (t >= params.release_time)) {
-                    move_planet(times[i] - t, lam, &planet.a, &planet.vs); 
+                    move_planet(times[i] - t, lam, &planet.vs, &planet.a); 
                 }
                 t = times[i];
             }
             else {
                 crank_nicholson_step(dt,ld,md,ud,fm);
                 if ((params.move_planet == TRUE) && (t >= params.release_time)) {
-                    move_planet(dt,lam,&planet.a,&planet.vs); 
+                    move_planet(dt,lam,&planet.vs,&planet.a); 
                 }
                 t += dt;
             }
