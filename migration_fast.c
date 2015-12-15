@@ -6,9 +6,8 @@ int main(void) {
     
     printf("Setting parameters...\n");
     set_params();
-    printf("Setting up planet...\n");
-    set_planet();
-    printf("Setting up grid...\n");
+    
+        printf("Setting up grid...\n");
     set_grid();
     printf("Initializing lambda...\n");
     if (params.read_initial_conditions == TRUE) {
@@ -480,27 +479,18 @@ double scaleH(double x) {
     return params.h * x *  pow(x, (params.gamma -.5)/2);
 }
 void set_params(void) {
-    params.nr = 512;
-    params.alpha = .1;
-    params.gamma = 0.5;
-    params.h = .1;
-    params.ri = .05;
-    params.ro = 30.;
-    params.dt = 10;
-    params.nvisc = 1;
-    params.nt = 100;
+    read_input_file("params.in");
+    
     params.mach = 1/params.h;
     params.nu0 = params.alpha * params.h*params.h;
     params.mth = params.h*params.h*params.h;
     params.mvisc = sqrt(27.*M_PI/8  * params.alpha * params.mach);
     params.tvisc = params.ro*params.ro/nu(params.ro); 
-    params.planet_torque = TRUE;
-    params.move_planet = TRUE;
-    params.read_initial_conditions = FALSE;
-    params.move_planet_implicit = TRUE;
-    params.bc_lam[0] = 1e-12;
-    params.bc_lam[1] = 1e-2;
-    params.release_time = 0;
+    planet.rh = pow( planet.mp * params.mth/3.,1./3) * planet.a;
+    planet.omp = pow(planet.a,-1.5);
+    planet.dep = params.h*planet.a;
+    planet.T0 = 2*M_PI*planet.a*planet.mp*planet.mp*params.mth/params.h;
+    planet.vs = 0;
 
     printf("Parameters:\n\tnr = %d\n\talpha = %.1e\n\th = %.2f\n\t(ri,ro) = (%lg,%lg)\n\tMach = %.1f\n\tm_th = %.2e\n\tm_visc = %.2e\n\tt_visc=%.2e\n",
             params.nr,
@@ -513,36 +503,25 @@ void set_params(void) {
             params.mvisc,
             params.tvisc);
 
-    return;
-}
-
-void set_planet(void) {
-    planet.a  = 10.;
-    planet.mp = 1;
-    planet.rh = pow( planet.mp * params.mth/3.,1./3) * planet.a;
-    planet.omp = pow(planet.a,-1.5);
-    planet.G1 = 0;
-    planet.beta = 2./3;
-    planet.delta = .1;
-    planet.dep = params.h*planet.a;
-    planet.c = 2./3;
-    planet.eps = 1;
-    planet.gaussian = FALSE;
-    planet.onesided = 0;
-    planet.T0 = 2*M_PI*planet.a*planet.mp*planet.mp*params.mth/params.h;
-    planet.vs = 0;
-
-    printf("Planet properties:\n \
+     printf("Planet properties:\n \
             \ta = %lg\n \
             \tmass = %lg mth = %.2e Mstar = %.2e mvisc\n \
             \trh = %lg = %lg h\n",
             planet.a, 
             planet.mp,planet.mp*params.mth,planet.mp/params.mvisc,
             planet.rh, planet.rh/params.h);
-
-
-
-
+     printf("\tplanet_torque = %s\n \
+             \tmove_planet = %s\n \
+             \tmove_planet_implicit = %s\n \
+             \tgaussian = %s\n \
+             \tread_initial_conditions = %s\n \
+             \toutputname = %s\n",
+             params.planet_torque ? "TRUE" : "FALSE", 
+             params.move_planet ? "TRUE" : "FALSE", 
+             params.move_planet_implicit ? "TRUE" : "FALSE", 
+             planet.gaussian ? "TRUE" : "FALSE", 
+             params.read_initial_conditions ? "TRUE" : "FALSE", 
+             params.outputname);
     return;
 }
 
@@ -789,3 +768,138 @@ double planet_zero_function(double a, double args[2]) {
     return lhs - rhs;
 }
 */
+
+
+/*  
+   Grid Parameters:
+    nr = 256;
+    ri = 0.05;
+    ro = 30;
+   
+    Disk Parameters:
+    alpha = .1;
+    gamma = 0.5;
+    h = .1;
+   
+    Boundary Conditions:
+
+    bc_lam[0] = 1e-12;
+    bc_lam[1] = 1e-2;
+
+    Time Parameters:
+    dt = 3;
+    nvisc = 1;
+    nt = 100;
+    release_time = 0;
+    read_initial_conditions = FALSE;
+
+  
+    Planet Properties:
+
+    planet_torque = TRUE;
+    move_planet = TRUE;
+    read_initial_conditions = FALSE;
+    move_planet_implicit = TRUE;
+    gaussian = FALSE;
+    onesided = 0;
+    a  = 10.;
+    mp = 1;
+    G1 = 0;
+    beta = 2./3;
+    delta = .1;
+    c = 2./3;
+    eps = 1;
+*/    
+
+
+void read_input_file(char *fname) {
+    char garbage[100],tmpstr[MAXSTRLEN];
+    char *gchar;
+    int read_res;
+    FILE *f;
+
+    printf("Reading input file %s...\n", fname);
+
+
+
+    f = fopen(fname,"r");
+
+    if (f==NULL) printf("\n\nERROR Can't Find Input File!\n\n");
+  
+	gchar=fgets(garbage,sizeof(garbage),f);	// Grid Parameters
+
+    read_res=fscanf(f,"nr = %d \n",&NR);
+    read_res=fscanf(f,"ri = %lg \n",&params.ri);
+    read_res=fscanf(f,"ro = %lg \n",&params.ro);   
+    gchar=fgets(garbage,sizeof(garbage),f); //	Disk Parameters:
+    read_res=fscanf(f,"alpha = %lg \n",&params.alpha); 
+    read_res=fscanf(f,"gamma = %lg \n",&params.gamma);
+    read_res=fscanf(f,"h = %lg \n",&params.h);
+   
+    gchar=fgets(garbage,sizeof(garbage),f);	//Boundary Conditions:
+
+    read_res=fscanf(f,"bc_lam_inner = %lg \n",&params.bc_lam[0]);
+    read_res=fscanf(f,"bc_lam_outer = %lg \n",&params.bc_lam[1]);
+
+    gchar=fgets(garbage,sizeof(garbage),f); //	Time Parameters:
+    read_res=fscanf(f,"dt = %lg \n",&params.dt);
+    read_res=fscanf(f,"nvisc = %lg \n",&params.nvisc);
+    read_res=fscanf(f,"nt = %d \n",&params.nt);
+    read_res=fscanf(f,"release_time = %lg \n",&params.release_time);
+    read_res=fscanf(f,"read_initial_conditions = %s \n",tmpstr);
+    set_bool(tmpstr,&params.read_initial_conditions);
+  
+    gchar=fgets(garbage,sizeof(garbage),f);	// Planet Properties:
+
+    read_res=fscanf(f,"planet_torque = %s \n",tmpstr);
+    set_bool(tmpstr,&params.planet_torque);
+    read_res=fscanf(f,"move_planet = %s \n",tmpstr);
+    set_bool(tmpstr,&params.move_planet);
+    read_res=fscanf(f,"read_initial_conditions = %s \n",tmpstr);
+    set_bool(tmpstr,&params.read_initial_conditions);
+    read_res=fscanf(f,"move_planet_implicit = %s \n",tmpstr);
+    set_bool(tmpstr,&params.move_planet_implicit);
+    read_res=fscanf(f,"gaussian = %s \n",tmpstr);
+    set_bool(tmpstr,&planet.gaussian);
+    
+    read_res=fscanf(f,"onesided = %lg \n",&planet.onesided);
+    read_res=fscanf(f,"a  = %lg \n",&planet.a);
+    read_res=fscanf(f,"mp = %lg \n",&planet.mp);
+    read_res=fscanf(f,"G1 = %lg \n",&planet.G1);
+    read_res=fscanf(f,"beta = %lg \n",&planet.beta);
+    read_res=fscanf(f,"delta = %lg \n",&planet.delta);
+    read_res=fscanf(f,"c = %lg \n",&planet.c);
+    read_res=fscanf(f,"eps = %lg \n",&planet.eps);
+    
+    read_res=fscanf(f,"outputname = %s\n",params.outputname); 
+    fclose(f);
+    printf("Outputting results to %s...\n",params.outputname);
+
+/*
+    rm_sub_string(fname,"params.in");
+    char *dirname = fname;
+    sprintf(outputname,"%s%s.hdf5",dirname,inputstr);
+*/
+// Leave me alone compiler
+    read_res += 1; garbage[0] = gchar[0];
+
+
+  return;
+
+}
+
+void set_bool(char *buff, int *val) {
+    printf("Recieved string %s\n", buff);
+    if ( (!strncmp(buff,"TRUE",MAXSTRLEN)) || (!strncmp(buff,"true",MAXSTRLEN)) || (!strncmp(buff,"True",MAXSTRLEN)) || (!strncmp(buff,"T",MAXSTRLEN)) || (!strncmp(buff,"T",MAXSTRLEN)) || (!strncmp(buff,"1",MAXSTRLEN))) {
+        *val = TRUE;
+        printf("Setting %s to TRUE\n",buff);
+    }
+    else {
+        *val = FALSE;
+        printf("Setting %s to FALSE\n",buff);
+    }
+    return;
+
+}
+
+

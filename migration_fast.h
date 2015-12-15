@@ -9,6 +9,7 @@
 #define WRITE_MATRIX
 //#define INITIAL_NOISE
 #define MAXITERATIONS 300
+#define MAXSTRLEN 300
 typedef struct Parameters {
     double alpha,h,ri,ro,gamma, mach, mth, mvisc, tvisc; 
     double nu0;
@@ -18,6 +19,7 @@ typedef struct Parameters {
     int read_initial_conditions;
     double bc_lam[2];
     double release_time;
+    char outputname[MAXSTRLEN];
 } Parameters;
 
 
@@ -25,7 +27,8 @@ typedef struct Planet {
     double a, omp, delta, G1, beta, mp,vs;
     double rh, dep;
     double c,eps;
-    int onesided,gaussian;
+    double onesided;
+    int gaussian;
     double T0;
 } Planet;
 
@@ -72,3 +75,5 @@ void predictor_corrector(double , double *, double *, double *);
 void predict_step(double , double *, double *, double *); 
 void correct_step(double , double *, double *, double *); 
 void multi_step(double , double *, double *, double *); 
+void set_bool(char *buff, int *val); 
+void read_input_file(char *fname); 
