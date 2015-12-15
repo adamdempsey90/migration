@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <string.h>
 
 #define NR params.nr
 #define TRUE 1
@@ -66,4 +67,8 @@ void free_matrix(void);
 double secant_method(double (*function)(double,double *, double[]),double, double,double *, double,double[]); 
 void move_planet_implicit(double, double *, double *, double *);
 double planet_zero_function_euler(double, double *,double[]); 
-
+void advance_system(double,double *,double);
+void predictor_corrector(double , double *, double *, double *); 
+void predict_step(double , double *, double *, double *); 
+void correct_step(double , double *, double *, double *); 
+void multi_step(double , double *, double *, double *); 

@@ -1,6 +1,9 @@
 #include "migration_fast.h"
+
 int main(void) {
+    
     int i,j;
+    
     printf("Setting parameters...\n");
     set_params();
     printf("Setting up planet...\n");
@@ -14,6 +17,8 @@ int main(void) {
     else {
         init_lam();
     }
+
+
 
 //    test_matvec();
     set_matrix(); 
@@ -44,6 +49,8 @@ int main(void) {
         mdoti[i] = mdot[i];
     }
 
+
+#pragma omp parallel for
     for(i=0;i<NR;i++) {
         torque[i] = dTr(rc[i],planet.a);
     }
@@ -58,34 +65,9 @@ int main(void) {
     for(i=0;i<nt;i++) {
         //printf("t = %.2f\n", times[i]);
         while (t < times[i]) {
-            if (times[i] - t < dt) {
-                if ((params.move_planet_implicit == FALSE) || (params.move_planet == FALSE)) { 
-                    crank_nicholson_step(times[i]-t,planet.a,lam);
-                }
-                if ((params.move_planet == TRUE) && (t >= params.release_time)) {
-                    if (params.move_planet_implicit == TRUE) {
-                        move_planet_implicit(times[i]-t,lam,&planet.vs,&planet.a);
-                    }
-                    else {
-                        move_planet(times[i] - t, lam, &planet.vs, &planet.a); 
-                    }
-                }
-                t = times[i];
-            }
-            else {
-                if ((params.move_planet_implicit == FALSE) || (params.move_planet == FALSE)) { 
-
-                    crank_nicholson_step(dt,planet.a,lam);
-                }
-                if ((params.move_planet == TRUE) && (t >= params.release_time)) {
-                    if (params.move_planet_implicit) {
-                        move_planet_implicit(dt,lam,&planet.vs,&planet.a);
-                    }
-                    else {
-                        move_planet(dt,lam,&planet.vs,&planet.a); 
-                    }
-                }
-                t += dt;
+            advance_system(dt, &t, times[i]);
+            if ((planet.a > params.ro) || (planet.a < params.ri)) {
+                printf("\nPlanet has left the domain!\n");
             }
         }
         printf("\r t = %.2e = %.2e tvisc\t%02d%% complete...", t,t/params.tvisc,(int)(100* i/((float)nt)));
@@ -168,11 +150,41 @@ int main(void) {
     return 1;
 }
 
+void advance_system(double dt, double *t, double tend) { 
+
+    double dt2 = tend-(*t);
+
+    if (dt > dt2) {
+        dt = dt2;
+    }
+ 
+    if ((params.move_planet) && (*t >= params.release_time)) {
+
+        if (params.move_planet_implicit) {
+     //       move_planet_implicit(dt,lam,&planet.vs, &planet.a);
+      //      predictor_corrector(dt,lam, &planet.vs,&planet.a); 
+            multi_step(dt,lam,&planet.vs,&planet.a);
+        }
+        else {
+            crank_nicholson_step(dt,planet.a, lam);
+            move_planet(dt, lam, &planet.vs, &planet.a); 
+        }
+    }
+    else {
+        crank_nicholson_step(dt,planet.a,lam);
+
+    }
+    *t += dt;
+
+    return;
+}
+
 
 void matvec(double *ld, double *md, double *ud, double *a, double *b, int n) {
     int i;
 
     b[0] += md[0]*a[0] + ud[0]*a[1];
+
 
     for(i=1;i<n-1;i++) {
         b[i] += ld[i-1]*a[i-1] + md[i]*a[i] + ud[i]*a[i+1];
@@ -253,6 +265,9 @@ void crank_nicholson_step(double dt, double aplanet, double *y) {
     matrix.md[NR-1] = 0;
     matrix.fm[NR-1] = 0;
 
+
+
+#pragma omp parallel for private(rm,rp,am,ap,bm,bp) shared(matrix,rc,rmin)
     for(i=1;i<NR-1;i++) {
         rm = rmin[i];
         rp = rmin[i+1];
@@ -267,6 +282,7 @@ void crank_nicholson_step(double dt, double aplanet, double *y) {
     
     matvec(matrix.ld,matrix.md,matrix.ud,lam,matrix.fm,NR);
 
+#pragma omp parallel for shared(y,dr,matrix)
     for(i=0;i<NR;i++) {
         matrix.fm[i] += dr[i]*y[i];
         matrix.md[i] = dr[i] - matrix.md[i];
@@ -471,7 +487,7 @@ void set_params(void) {
     params.ri = .05;
     params.ro = 30.;
     params.dt = 10;
-    params.nvisc = 1e-4;
+    params.nvisc = 1;
     params.nt = 100;
     params.mach = 1/params.h;
     params.nu0 = params.alpha * params.h*params.h;
@@ -480,7 +496,7 @@ void set_params(void) {
     params.tvisc = params.ro*params.ro/nu(params.ro); 
     params.planet_torque = TRUE;
     params.move_planet = TRUE;
-    params.read_initial_conditions = TRUE;
+    params.read_initial_conditions = FALSE;
     params.move_planet_implicit = TRUE;
     params.bc_lam[0] = 1e-12;
     params.bc_lam[1] = 1e-2;
@@ -575,8 +591,9 @@ double smoothing(double x, double x0, double w) {
 double calc_drift_speed(double a, double *y) {
     int i;
     double res = 0;
-    
 
+
+#pragma omp parallel for reduction(+:res)    
     for(i=0;i<NR;i++) {
         res += dTr(rc[i],a)*y[i];
     }
@@ -654,10 +671,12 @@ void move_planet_implicit(double dt, double *y, double *vs, double *a) {
     double a_old = *a;
     double args[2] = {dt,a_old};
     double a_new;
-    *a = secant_method(&planet_zero_function_euler,a_old, .9*a_old, y,tol,args); 
-    
-    *vs = calc_drift_speed(planet.a,lam);
-
+    double *lam_old = (double *)malloc(sizeof(double)*NR);
+    memcpy(&lam_old[0],&y[0],sizeof(double)*NR);
+    *a = secant_method(&planet_zero_function_euler,a_old, .9*a_old, lam_old,tol,args); 
+    memcpy(&y[0],&lam_old[0],sizeof(double)*NR);
+    *vs = calc_drift_speed(planet.a,y);
+    free(lam_old);
     /*
     double vs = calc_drift_speed(*a, );
     double rhs = planet.a + .5*dt * vs;
@@ -687,7 +706,7 @@ double secant_method(double (*function)(double,double *,double[]),double x1, dou
         x1 -= f1*(x1-x2)/(f1-f2);
         if (fabs(x1-x2) <= tol) {
             printf("Converged to %lg in %d iterations\n",x1,i);
-            break;
+            return x1;
         }
        // printf("%lg\t%lg\t%lg\t%lg\n",x1,x2,f1,f2);
         x2 = temp;
@@ -706,6 +725,57 @@ double planet_zero_function_euler(double a, double *y,double args[]) {
 
     return a - a_old - dt*vs;
 }
+
+void predictor_corrector(double dt, double *y, double *vs, double *a) {
+
+/*
+    double vs1 = calc_drift_speed(*a, y);
+    
+    double a1 = *a + dt*vs1;
+
+    crank_nicholson_step(dt,a1,y);
+    
+    *vs = calc_drift_speed(a1,y);
+    *a += .5*dt*(vs1 + *vs);
+*/
+
+    predict_step(dt,y,vs,a);
+    correct_step(dt,y,vs,a);
+    predict_step(dt,y,vs,a);
+    correct_step(dt,y,vs,a);
+
+
+    return;
+}
+
+void predict_step(double dt, double *y,double *vs, double *a) {
+    *vs = calc_drift_speed(*a,y);
+    *a += dt * (*vs);
+    return;
+}
+
+void correct_step(double dt, double *y, double *vs, double *a) {
+    crank_nicholson_step(dt,*a,y);
+    double vs1 = calc_drift_speed(*a,y);
+    *a += .5*dt*(vs1 - (*vs));
+    *vs = vs1;
+    return;
+}
+
+void multi_step(double dt, double *y, double *vs, double *a) {
+    double vs1 = calc_drift_speed(*a,y);
+    *a += .5*dt*vs1;
+
+    crank_nicholson_step(dt,*a,y);
+
+    *vs = calc_drift_speed(*a,y);
+
+    *a += .5*dt*(*vs);
+
+    return;
+}
+
+
 
 /*
 double planet_zero_function(double a, double args[2]) {
