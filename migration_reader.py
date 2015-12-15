@@ -1,8 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
-
+from scipy.interpolate import interp1d
 class Sim():
-    def __init__(self,fname = 'results.dat', pname = 'planet.dat'):
+    def __init__(self,fname = 'mg_results.dat', pname = 'planet.dat'):
         dat_p = np.loadtxt(pname);
         self.t = dat_p[:,0]
         self.nt = len(self.t)
@@ -88,9 +88,22 @@ class Sim():
 
         fig.canvas.draw()
         return axes,fig
-    def write_lam_to_file(self,r,lam):
+    def write_lam_to_file(self,r,lam,interpolate=False):
+        if interpolate:
+            lam = interp1d(r,lam)(self.rc)
+            r = self.rc
+
         with open("lambda_init.dat","w") as f:
             lines = ["%.12g\t%.12g" %(x,l) for x,l in zip(r,lam)]
             f.write('\n'.join(lines))
 
+    def load_steadystate(self,directory=''):
+        if len(directory)>0 and directory[-1] != '/':
+            directory += '/'
+        dat = np.loadtxt(directory+'results.dat')
+        self.ss_r = dat[:,0]
+        self.ss_lam = dat[:,1]
+        self.ss_vr = dat[:,2]
+        self.ss_dTr = dat[:,3]
+        self.ss_mdot = -dat[10,1]*dat[10,2]
 
