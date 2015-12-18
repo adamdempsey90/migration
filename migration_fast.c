@@ -798,7 +798,6 @@ double planet_zero_function(double a, double args[2]) {
 
     planet_torque = TRUE;
     move_planet = TRUE;
-    read_initial_conditions = FALSE;
     move_planet_implicit = TRUE;
     gaussian = FALSE;
     onesided = 0;
@@ -855,8 +854,6 @@ void read_input_file(char *fname) {
     set_bool(tmpstr,&params.planet_torque);
     read_res=fscanf(f,"move_planet = %s \n",tmpstr);
     set_bool(tmpstr,&params.move_planet);
-    read_res=fscanf(f,"read_initial_conditions = %s \n",tmpstr);
-    set_bool(tmpstr,&params.read_initial_conditions);
     read_res=fscanf(f,"move_planet_implicit = %s \n",tmpstr);
     set_bool(tmpstr,&params.move_planet_implicit);
     read_res=fscanf(f,"gaussian = %s \n",tmpstr);

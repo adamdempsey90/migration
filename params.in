@@ -4,7 +4,7 @@ ri = 0.05
 ro = 30
 
 #Disk Parameters:
-alpha = 0.01
+alpha = 0.03
 gamma = 0.5
 h = .1
 
@@ -13,21 +13,20 @@ bc_lam_inner = 0.0
 bc_lam_outer = 0.01
 
 #Time Parameters:
-dt = 100
-nvisc = 1
-nt = 1000
+dt = 1
+nvisc = .1
+nt = 100
 release_time = 0
-read_initial_conditions = FALSE
+read_initial_conditions = T
 
 
 #Planet Properties:
 planet_torque = TRUE
-move_planet = FALSE
-read_initial_conditions = FALSE
-move_planet_implicit = FALSE
+move_planet = T
+move_planet_implicit = T
 gaussian = FALSE
 onesided = 0
-a  = 10.
+a  = 20.
 mp = 1
 G1 = 0
 beta = 0.66666667

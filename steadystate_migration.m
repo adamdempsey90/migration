@@ -23,7 +23,7 @@ Print["\[Beta] = ", \[Beta]]
 Print["\[CapitalDelta] = ",\[CapitalDelta]]
 
 \[CapitalGamma] = ToExpression[$ScriptCommandLine[[10]]];
-Print["\[CapitalGamma] = ",\[CapitalGamma]] 
+Print["\[CapitalGamma] = ",\[CapitalGamma]]
 
 ri = ToExpression[$ScriptCommandLine[[11]]];
 Print["ri = ", ri]
@@ -54,6 +54,10 @@ Print["nr = ", nr]
 
 OneSided = ToExpression[$ScriptCommandLine[[20]]];
 
+flareindex = (\[Gamma] - 0.5)/2
+Print["Flaring = ",flareindex]
+
+
 ai = ToExpression[$ScriptCommandLine[[21]]];
 Print["a low = ", ai]
 ao = ToExpression[$ScriptCommandLine[[22]]];
@@ -75,18 +79,26 @@ q[a_] := Max[h,rh[a]];
 
 
 
+scaleH[x_]:= h x^(flareindex + 1)
+\[Xi][x_,a_]:= (x-a)/scaleH[x]
 
-\[Alpha]disk[x_,rout_]:=\[Lambda]i + (\[Lambda]o-\[Lambda]i) (x/nu[x] - ri/nu[ri])/(rout/nu[rout]-ri/nu[ri]) 
+\[Alpha]disk[x_,rout_]:=\[Lambda]i + (\[Lambda]o-\[Lambda]i) (x/nu[x] - ri/nu[ri])/(rout/nu[rout]-ri/nu[ri])
 \[Alpha]disk2[x_,lamin_,lamout_,rin_,rout_]:=lamin+ (lamout-lamin) (x/nu[x] - rin/nu[rin])/(rout/nu[rout]-rin/nu[rin])
 nu[x_]:= \[Alpha] h^2 x^\[Gamma]
 vrn[x_,rout_]:= -1.5 (\[Lambda]o-\[Lambda]i)/(rout/nu[rout]-ri/nu[ri]) /\[Alpha]disk[x,rout]
-\[Xi][x_,a_]:= (x-a)/q[a]
+
+
 Func[x_,a_]:= T0 *((\[CapitalGamma]+1)Exp[-((\[Xi][x,a]-\[Beta])/\[CapitalDelta])^2] - (1-OneSided) Exp[-((\[Xi][x,a]+\[Beta])/\[CapitalDelta])^2])/(\[CapitalDelta] Sqrt[Pi])
+
 s[x_,x0_,w_]:= .5(1 + Tanh[(x-x0)/w])
-\[CapitalLambda]L[x_,a_,f_,c_]:= Piecewise[{{-f a Pi (\[Mu] h^3)^2 (x/(Max[h x, Abs[x-a]]))^4,x<a},{0,x>=a}}]
-\[CapitalLambda]R[x_,a_,f_,c_]:= Piecewise[{{f a  Pi (\[Mu] h^3)^2 (a/(Max[h x, Abs[x-a]]))^4,x>a} ,{0,x<=a}}]
+
+\[CapitalLambda]L[x_,a_,f_,c_]:= Piecewise[{{-f a Pi (\[Mu] h^3)^2 (x/(Max[scaleH[x], Abs[x-a]]))^4,x<a},{0,x>=a}}]
+
+\[CapitalLambda]R[x_,a_,f_,c_]:= Piecewise[{{f a  Pi (\[Mu] h^3)^2 (a/(Max[scaleH[x], Abs[x-a]]))^4,x>a} ,{0,x<=a}}]
+
 \[CapitalLambda][x_,a_,f_,c_]:=Piecewise[{{- f Pi (\[Mu] h^3)^2 (x/(x-a))^4,x<(a-c rh[a])},{0,a-c rh[a] <= x<= a+c rh[a]},{f Pi (\[Mu] h^3)^2 (x/(x-a))^4,x>(a+c rh[a])}}]
-\[CapitalLambda]smooth[x_,a_,f_,c_,w_]:=(1-s[x,a-c h x,w])\[CapitalLambda]L[x,a,f,c] (1-OneSided)  + s[x,a-c h x,w] s[x,a + c h x,w] \[CapitalLambda]R[x,a,f,c]
+
+\[CapitalLambda]smooth[x_,a_,f_,c_,w_]:=(1-s[\[Xi][x,a],-c,w])\[CapitalLambda]L[x,a,f,c] (1-OneSided)  + s[\[Xi][x,a],-c,w] s[\[Xi][x,a],c,w] \[CapitalLambda]R[x,a,f,c]
 Torque[r_,a_,f_,c_,w_]:= UseGaussian Func[r,a] + UseTorque \[CapitalLambda]smooth[r,a,f,c,w]
 Mdot[a_]:= m[r] /. NDSolve[ {3 nu[r] \[Lambda]'[r] + \[Lambda][r](3 nu[r](\[Gamma]-.5)/r - PlanetFlag  Torque[r,a,\[CapitalLambda]f,\[CapitalLambda]c,\[CapitalLambda]w] /(Pi  Sqrt[r])) == m[r],m'[r]== 0,\[Lambda][ri]== \[Lambda]i,\[Lambda][ro]== \[Lambda]o},{\[Lambda],m},{r,ri,ro}];
 sol[a_] :=  NDSolve[ {3 nu[r] \[Lambda]'[r] + \[Lambda][r](3 nu[r](\[Gamma]-.5)/r - PlanetFlag  Torque[r,a,\[CapitalLambda]f,\[CapitalLambda]c,\[CapitalLambda]w] /(Pi  Sqrt[r])) == m[r],m'[r]== 0,\[Lambda][ri]== \[Lambda]i,\[Lambda][ro]== \[Lambda]o},{\[Lambda],m},{r,ri,ro}]
@@ -104,7 +116,7 @@ mdotfinal = Table[m[avals[[i]]]/. sols[[i]][[1]],{i,1,Na}]
 lamfinal = Table[\[Lambda][r] /. sols[[i]][[1]],{i,1,Na}]
 adotfinal = Table[adot[avals[[i]],mdotfinal[[i]]],{i,1,Na}]
 Print[mdotfinal]
-Print[adotfinal] 
+Print[adotfinal]
 lamp= Table[\[Lambda][avals[[i]]] /. sols[[i]][[1]],{i,1,Na}]
 Print[lamp]
 
@@ -124,5 +136,3 @@ Export["results.dat",dat]
 Print["Done"]
 
 Exit[]
-
-
