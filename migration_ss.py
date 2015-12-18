@@ -290,4 +290,7 @@ class Simulation():
         res *= -2*np.sqrt(a)/(self.mu*self.mth)
         return res
 
-
+    def get_interpolated_functions(self,rc,a):
+        ifunc = interp.interp1d(rc,self.I_int(rc,a))
+        kfunc = interp.interp1d(rc,self.K_int(rc,a,ifunc))
+        return ifunc,kfunc
