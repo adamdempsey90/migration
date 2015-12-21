@@ -28,43 +28,43 @@ int main(void) {
     double t_end = params.nvisc * params.tvisc;
     double dt = params.dt;
     int nt = params.nt;
-    double *times = (double *)malloc(sizeof(double)*nt);
-    double *avals = (double *)malloc(sizeof(double)*nt);
-    double *vs = (double *)malloc(sizeof(double)*nt);
-    double *sol = (double *)malloc(sizeof(double)*NR*nt);
-    double *sol_mdot = (double *)malloc(sizeof(double)*NR*nt);
-    double *torque = (double *)malloc(sizeof(double)*NR);
-    double *lami = (double *)malloc(sizeof(double)*NR);
-    double *mdoti = (double *)malloc(sizeof(double)*NR);
+    fld.times = (double *)malloc(sizeof(double)*nt);
+    fld.avals = (double *)malloc(sizeof(double)*nt);
+    fld.vs = (double *)malloc(sizeof(double)*nt);
+    fld.sol = (double *)malloc(sizeof(double)*NR*nt);
+    fld.sol_mdot = (double *)malloc(sizeof(double)*NR*nt);
+    fld.torque = (double *)malloc(sizeof(double)*NR);
+    fld.lami = (double *)malloc(sizeof(double)*NR);
+    fld.mdoti = (double *)malloc(sizeof(double)*NR);
 
-    avals[0] = planet.a; vs[0] = planet.vs;
+    fld.avals[0] = planet.a; fld.vs[0] = planet.vs;
 
     for(i=0;i<NR*nt;i++) {
-        sol[i] = 0;
-        sol_mdot[i] = 0;
+        fld.sol[i] = 0;
+        fld.sol_mdot[i] = 0;
     }
     for(i=0;i<NR;i++) {
-        lami[i] = lam[i];
-        mdoti[i] = mdot[i];
+        fld.lami[i] = lam[i];
+        fld.mdoti[i] = mdot[i];
     }
 
 
 #pragma omp parallel for
     for(i=0;i<NR;i++) {
-        torque[i] = dTr(rc[i],planet.a);
+        fld.torque[i] = dTr(rc[i],planet.a);
     }
 
     for(i=0;i<nt;i++) {
-        times[i] = pow(10,i * log10(params.nvisc*params.tvisc) /((double) nt));
+        fld.times[i] = pow(10,i * log10(params.nvisc*params.tvisc) /((double) nt));
     }
 
     printf("Viscous time is %.1e...\n", params.tvisc); 
     printf("Starting Integration...\n");
     double t = 0;
     for(i=0;i<nt;i++) {
-        //printf("t = %.2f\n", times[i]);
-        while (t < times[i]) {
-            advance_system(dt, &t, times[i]);
+        //printf("t = %.2f\n", fld.times[i]);
+        while (t < fld.times[i]) {
+            advance_system(dt, &t, fld.times[i]);
             if ((planet.a > params.ro) || (planet.a < params.ri)) {
                 printf("\nPlanet has left the domain!\n");
             }
@@ -72,20 +72,21 @@ int main(void) {
         printf("\r t = %.2e = %.2e tvisc\t%02d%% complete...", t,t/params.tvisc,(int)(100* i/((float)nt)));
         fflush(stdout);
         set_mdot(params.planet_torque);     
-        avals[i] = planet.a;
-        vs[i] = planet.vs;
+        fld.avals[i] = planet.a;
+        fld.vs[i] = planet.vs;
         for(j=0;j<NR;j++) {
-            sol[j + NR*i] = lam[j];
-            sol_mdot[j + NR*i] = mdot[j];
+            fld.sol[j + NR*i] = lam[j];
+            fld.sol_mdot[j + NR*i] = mdot[j];
         }
     
     }
     printf("\n"); 
     printf("Outputting results...\n");
+    write_hdf5_file();
     FILE *fname = fopen("mg_results.dat","w");
     FILE *pname = fopen("planet.dat","w");
     for(i=0; i<nt; i++) {
-        fprintf(pname, "%.12g\t%.12g\t%.12g\n",times[i],avals[i],vs[i]);
+        fprintf(pname, "%.12g\t%.12g\t%.12g\n",fld.times[i],fld.avals[i],fld.vs[i]);
     }
     fclose(pname);
     
@@ -106,33 +107,33 @@ int main(void) {
     fprintf(fname,"\n");
     fprintf(fname,"%lg",params.tvisc);
     for(j=0;j<NR;j++) {
-        fprintf(fname, "\t%lg",torque[j]);
+        fprintf(fname, "\t%lg",fld.torque[j]);
     }
     fprintf(fname,"\n");
 
     fprintf(fname, "%lg",params.bc_lam[0]);
     for(j=0;j<NR;j++) {
-        fprintf(fname,"\t%lg",lami[j]);
+        fprintf(fname,"\t%lg",fld.lami[j]);
     }
     fprintf(fname,"\n");
 
     fprintf(fname, "%lg",params.bc_lam[1]);
     for(j=0;j<NR;j++) {
-        fprintf(fname,"\t%lg",mdoti[j]);
+        fprintf(fname,"\t%lg",fld.mdoti[j]);
     }
     fprintf(fname,"\n");
 
     for(i=0;i<nt;i++) {
-        fprintf(fname,"%lg",times[i]);
+        fprintf(fname,"%lg",fld.times[i]);
         for(j=0;j<NR;j++) {
-            fprintf(fname,"\t%lg",sol[j+NR*i]);
+            fprintf(fname,"\t%lg",fld.sol[j+NR*i]);
         }
         fprintf(fname,"\n");
     }
     for(i=0;i<nt;i++) {
         fprintf(fname,"-1");
         for(j=0;j<NR;j++) {
-            fprintf(fname,"\t%lg",sol_mdot[j+NR*i]);
+            fprintf(fname,"\t%lg",fld.sol_mdot[j+NR*i]);
         }
         fprintf(fname,"\n");
     }
@@ -140,10 +141,10 @@ int main(void) {
     printf("Cleaning up...\n");
     fclose(fname);
 
-    free(lami); free(mdoti);
-    free(times); free(sol); free(avals); free(vs);
-    free(sol_mdot);
-    free(torque);
+    free(fld.lami); free(fld.mdoti);
+    free(fld.times); free(fld.sol); free(fld.avals); free(fld.vs);
+    free(fld.sol_mdot);
+    free(fld.torque);
     free_grid();
     free_matrix();
     return 1;
@@ -362,7 +363,9 @@ void trisolve(double *ld, double *md, double *ud, double *d,double *sol,int n) {
 
 void init_lam_from_file(void) {
     FILE *f = fopen("lambda_init.dat","r");
-
+    if (f == NULL) {
+        printf("Can't find the data file lambda_init.dat!");
+    }
     double x,temp;
     int i=0;
     while (fscanf(f,"%lg\t%lg\n",&x,&temp) != EOF) {
@@ -899,4 +902,163 @@ void set_bool(char *buff, int *val) {
 
 }
 
+void write_hdf5_double(double *data, hsize_t *dims, int ndims, hid_t group_path, char *name) {
+  hid_t dspc_id, dset_id;
+ 
+  dspc_id = H5Screate_simple(ndims,dims,NULL);
+  dset_id = H5Dcreate(group_path,name,H5T_NATIVE_DOUBLE,dspc_id,H5P_DEFAULT);
 
+    HDF5_INSERT_ERROR( H5Dwrite(dset_id,H5T_NATIVE_DOUBLE,H5S_ALL,H5S_ALL,H5P_DEFAULT,data) );
+	
+    HDF5_INSERT_ERROR( H5Sclose(dspc_id));
+   HDF5_INSERT_ERROR( H5Dclose(dset_id));
+
+
+
+  return;
+
+
+}
+void write_hdf5_file(void) {
+  
+  printf("Outputting Results to %s...\n",params.outputname);
+  
+  hid_t file_id = H5Fcreate(params.outputname, H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
+  hid_t root_id = H5Gcreate(file_id,"/Migration",0);
+  hid_t mesh_id = H5Gcreate(root_id,"Mesh",0);
+  hid_t solution_id = H5Gcreate(root_id,"Solution",0);
+  hid_t matrix_id = H5Gcreate(root_id,"Matrix",0);
+  hid_t params_id = H5Gcreate(root_id,"Parameters",0);
+
+
+    hsize_t dims1[1] = {NR};
+    hsize_t dims1_t[1]= {params.nt};
+    hsize_t dims1_small[1] = {NR-1};
+    hsize_t dims2[2] = {params.nt,NR};
+
+// Write Mesh data
+    write_hdf5_double(rc,dims1,1,mesh_id,"rc");
+    write_hdf5_double(dr,dims1,1,mesh_id,"dr");
+      write_hdf5_double(rmin,dims1,1,mesh_id,"rmin");
+      write_hdf5_double(fld.lami,dims1,1,mesh_id,"lami");
+      write_hdf5_double(fld.mdoti,dims1,1,mesh_id,"mdoti");
+// Write Matrix
+   write_hdf5_double(matrix.md,dims1,1,matrix_id,"md");
+    write_hdf5_double(matrix.ld,dims1_small,1,matrix_id,"ld");
+    write_hdf5_double(matrix.ud,dims1_small,1,matrix_id,"ud");
+   write_hdf5_double(matrix.fm,dims1,1,matrix_id,"fm");
+
+
+// Write Solution
+    write_hdf5_double(fld.sol,dims2,2,solution_id,"lam");
+    write_hdf5_double(fld.torque,dims2,2,solution_id,"torque");
+    write_hdf5_double(fld.sol_mdot,dims2,2,solution_id,"mdot");
+    write_hdf5_double(fld.times,dims1_t,1,solution_id,"times");
+
+     write_hdf5_double(fld.avals,dims1_t,1,solution_id,"avals");
+     write_hdf5_double(fld.vs,dims1_t,1,solution_id,"vs");
+  
+
+    write_hdf5_params(&params_id);
+
+    HDF5_INSERT_ERROR(H5Gclose(mesh_id));
+  HDF5_INSERT_ERROR(H5Gclose(matrix_id));
+  HDF5_INSERT_ERROR(H5Gclose(solution_id));
+ HDF5_INSERT_ERROR(H5Gclose(params_id));
+  HDF5_INSERT_ERROR(H5Gclose(root_id));
+  HDF5_INSERT_ERROR(H5Fclose(file_id));
+
+
+  return;
+
+
+}
+void write_hdf5_params(hid_t *params_id) {
+  hid_t memtype,dspc_id, dset_id;
+  hsize_t dims[1] = {1};
+
+
+
+
+    param_t out_par;
+    out_par.nr = params.nr;
+    out_par.ri = params.ri;
+    out_par.ro = params.ro;
+    out_par.alpha= params.alpha;
+    out_par.gamma= params.gamma;
+    out_par.h = params.h;
+    out_par.bc_lam_inner =  params.bc_lam[0];
+    out_par. bc_lam_outer = params.bc_lam[1];
+    out_par.dt= params.dt;
+    out_par.nvisc = params.nvisc;
+    out_par.nt = params.nt;
+    out_par.release_time = params.release_time;
+    out_par.read_initial_conditions = params.read_initial_conditions;
+    out_par.planet_torque = params.planet_torque;
+    out_par.move_planet = params.move_planet;
+    out_par.gaussian = planet.gaussian;
+    out_par.one_sided = planet.onesided;
+    out_par.a = planet.a;
+    out_par.mp = planet.mp;
+    out_par.G1 = planet.G1;
+    out_par.beta = planet.beta;
+    out_par.delta = planet.delta;
+    out_par.c = planet.c;
+    out_par.eps = planet.eps;
+
+    memtype = H5Tcreate (H5T_COMPOUND, sizeof (param_t));
+     HDF5_INSERT_ERROR(H5Tinsert (memtype, "nr", HOFFSET (param_t, nr), H5T_NATIVE_INT));
+ 
+    HDF5_INSERT_ERROR(H5Tinsert (memtype, "ri", HOFFSET (param_t, ri), H5T_NATIVE_DOUBLE));
+
+    HDF5_INSERT_ERROR(H5Tinsert (memtype, "ro", HOFFSET (param_t, ro), H5T_NATIVE_DOUBLE));
+
+   HDF5_INSERT_ERROR(H5Tinsert (memtype, "alpha", HOFFSET (param_t, alpha), H5T_NATIVE_DOUBLE));
+
+   HDF5_INSERT_ERROR(H5Tinsert (memtype, "gamma", HOFFSET (param_t, gamma), H5T_NATIVE_DOUBLE));
+
+   HDF5_INSERT_ERROR(H5Tinsert (memtype, "h", HOFFSET (param_t, h), H5T_NATIVE_DOUBLE));
+
+   HDF5_INSERT_ERROR(H5Tinsert (memtype, "bc_lam_inner", HOFFSET (param_t, bc_lam_inner), H5T_NATIVE_DOUBLE));
+
+   HDF5_INSERT_ERROR(H5Tinsert (memtype, "bc_lam_outer", HOFFSET (param_t, bc_lam_outer), H5T_NATIVE_DOUBLE));
+
+   HDF5_INSERT_ERROR(H5Tinsert (memtype, "dt", HOFFSET (param_t, dt), H5T_NATIVE_DOUBLE));
+
+   HDF5_INSERT_ERROR(H5Tinsert (memtype, "nvisc", HOFFSET (param_t, nvisc), H5T_NATIVE_DOUBLE));
+
+      HDF5_INSERT_ERROR(H5Tinsert (memtype, "nt", HOFFSET (param_t, nt), H5T_NATIVE_INT));
+ 
+      HDF5_INSERT_ERROR(H5Tinsert (memtype, "release_time", HOFFSET (param_t, release_time), H5T_NATIVE_DOUBLE));
+ 
+ HDF5_INSERT_ERROR(H5Tinsert (memtype, "read_intial_conditions", HOFFSET (param_t, read_initial_conditions), H5T_NATIVE_INT));
+ 
+ HDF5_INSERT_ERROR(H5Tinsert (memtype, "planet_torque", HOFFSET (param_t, planet_torque), H5T_NATIVE_INT));
+ 
+ HDF5_INSERT_ERROR(H5Tinsert (memtype, "move_planet", HOFFSET (param_t, move_planet), H5T_NATIVE_INT));
+ 
+ HDF5_INSERT_ERROR(H5Tinsert (memtype, "gaussian", HOFFSET (param_t, gaussian), H5T_NATIVE_INT));
+ 
+
+    HDF5_INSERT_ERROR(H5Tinsert (memtype, "one_sided", HOFFSET (param_t, one_sided), H5T_NATIVE_DOUBLE));
+      HDF5_INSERT_ERROR(H5Tinsert (memtype, "a", HOFFSET (param_t, a), H5T_NATIVE_DOUBLE));
+      HDF5_INSERT_ERROR(H5Tinsert (memtype, "mp", HOFFSET (param_t, mp), H5T_NATIVE_DOUBLE));
+      HDF5_INSERT_ERROR(H5Tinsert (memtype, "G1", HOFFSET (param_t, G1), H5T_NATIVE_DOUBLE));
+      HDF5_INSERT_ERROR(H5Tinsert (memtype, "beta", HOFFSET (param_t,beta), H5T_NATIVE_DOUBLE));
+      HDF5_INSERT_ERROR(H5Tinsert (memtype, "delta", HOFFSET (param_t, delta), H5T_NATIVE_DOUBLE));
+      HDF5_INSERT_ERROR(H5Tinsert (memtype, "c",HOFFSET (param_t,c), H5T_NATIVE_DOUBLE));
+        HDF5_INSERT_ERROR(H5Tinsert (memtype, "eps",HOFFSET (param_t,eps), H5T_NATIVE_DOUBLE));
+
+   
+
+
+  dspc_id = H5Screate_simple(1,dims,NULL);
+  dset_id = H5Dcreate(*params_id,"Parameters",memtype,dspc_id,H5P_DEFAULT);
+
+  HDF5_INSERT_ERROR(H5Dwrite(dset_id,memtype,H5S_ALL,H5S_ALL,H5P_DEFAULT,&out_par));
+
+  HDF5_INSERT_ERROR(H5Sclose(dspc_id));
+  HDF5_INSERT_ERROR(H5Dclose(dset_id));
+
+    return;
+}

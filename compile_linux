@@ -1,0 +1,2 @@
+#!/bin/bash
+gcc -O3 -Wall -fopenmp -g migration_fast.c -lm -lgomp -lhdf5

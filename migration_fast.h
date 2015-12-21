@@ -1,6 +1,9 @@
+
+#define H5_USE_16_API
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <hdf5.h>
 #include <string.h>
 
 #define NR params.nr
@@ -10,6 +13,7 @@
 //#define INITIAL_NOISE
 #define MAXITERATIONS 300
 #define MAXSTRLEN 300
+#define HDF5_INSERT_ERROR(status)  if (status < 0) printf("HDF5 error\n");
 typedef struct Parameters {
     double alpha,h,ri,ro,gamma, mach, mth, mvisc, tvisc; 
     double nu0;
@@ -22,6 +26,33 @@ typedef struct Parameters {
     char outputname[MAXSTRLEN];
 } Parameters;
 
+
+typedef struct param_t {
+    int nr;
+    double ri;
+    double ro;
+    double alpha;
+    double gamma;
+    double h;
+    double bc_lam_inner;
+    double bc_lam_outer;
+    double dt;
+    double nvisc;
+    int nt;
+    double release_time;
+    int read_initial_conditions;
+    int planet_torque;
+    int move_planet;
+    int gaussian;
+    double one_sided;
+    double a;
+    double mp;
+    double G1;
+    double beta;
+    double delta;
+    double c;
+    double eps;
+} param_t; 
 
 typedef struct Planet {
     double a, omp, delta, G1, beta, mp,vs;
@@ -37,7 +68,17 @@ typedef struct TridDiagMat {
     double *md, *ld, *ud, *fm;
 } TriDiagMat;
 
+typedef struct Field {
+double *sol;
+double *sol_mdot;
+double *times;
+double *lami;
+double *mdoti;
+double *avals;
+double *vs; 
+double *torque;
 
+} Field;
 
 double *rc, *rmin, *lam, *dr;
 double *lrc, *lrmin;
@@ -46,7 +87,7 @@ double dlr;
 Parameters params;
 Planet planet; 
 TriDiagMat matrix; 
-
+Field fld;
 void set_params(void);
 void set_planet(void);
 void set_grid(void);
@@ -77,3 +118,7 @@ void correct_step(double , double *, double *, double *);
 void multi_step(double , double *, double *, double *); 
 void set_bool(char *buff, int *val); 
 void read_input_file(char *fname); 
+void write_hdf5_double(double *data, hsize_t *dims, int ndims, hid_t group_path, char *name);
+void write_hdf5_file(void);
+void write_hdf5_params(hid_t *params_id); 
+
