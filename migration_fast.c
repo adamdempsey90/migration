@@ -17,8 +17,10 @@ int main(void) {
         init_lam();
     }
 
-
-
+    allocate_field(&fld);
+    allocate_steady_state_field(&fld_ss);
+    
+       
 //    test_matvec();
     set_matrix(); 
 
@@ -28,28 +30,28 @@ int main(void) {
     double t_end = params.nvisc * params.tvisc;
     double dt = params.dt;
     int nt = params.nt;
-    fld.times = (double *)malloc(sizeof(double)*nt);
-    fld.avals = (double *)malloc(sizeof(double)*nt);
-    fld.vs = (double *)malloc(sizeof(double)*nt);
-    fld.sol = (double *)malloc(sizeof(double)*NR*nt);
-    fld.sol_mdot = (double *)malloc(sizeof(double)*NR*nt);
-    fld.torque = (double *)malloc(sizeof(double)*NR);
-    fld.lami = (double *)malloc(sizeof(double)*NR);
-    fld.mdoti = (double *)malloc(sizeof(double)*NR);
-
     fld.avals[0] = planet.a; fld.vs[0] = planet.vs;
 
     for(i=0;i<NR*nt;i++) {
         fld.sol[i] = 0;
         fld.sol_mdot[i] = 0;
     }
+    
+    steadystate_config(&fld_ss,planet.a);
+    fld.vs_ss[0] = fld_ss.vs;
+    fld.mdot_ss[0] = fld_ss.mdot;
+    fld.efficiency[0] = fld_ss.mdot/fld_ss.mdot0;
+
+
     for(i=0;i<NR;i++) {
         fld.lami[i] = lam[i];
         fld.mdoti[i] = mdot[i];
+        fld.sol_ss[i] = fld_ss.lam[i];
+        fld.lamp[i] = fld_ss.lamp[i];
     }
 
 
-#pragma omp parallel for
+#pragma omp parallel for private(i)
     for(i=0;i<NR;i++) {
         fld.torque[i] = dTr(rc[i],planet.a);
     }
@@ -74,9 +76,18 @@ int main(void) {
         set_mdot(params.planet_torque);     
         fld.avals[i] = planet.a;
         fld.vs[i] = planet.vs;
+    
+        steadystate_config(&fld_ss,planet.a);
+        fld.vs_ss[i] = fld_ss.vs;
+        fld.mdot_ss[i] = fld_ss.mdot;
+        fld.efficiency[i] = fld_ss.mdot/fld_ss.mdot0;
+
         for(j=0;j<NR;j++) {
             fld.sol[j + NR*i] = lam[j];
             fld.sol_mdot[j + NR*i] = mdot[j];
+            fld.torque[j + NR*i] = dTr(rc[j],planet.a);
+            fld.sol_ss[j + NR*i] = fld_ss.lam[j];
+            fld.lamp[j+NR*i] = fld_ss.lamp[j];
         }
     
     }
@@ -84,13 +95,70 @@ int main(void) {
     printf("Outputting results...\n");
     write_hdf5_file();
     
-    free(fld.lami); free(fld.mdoti);
-    free(fld.times); free(fld.sol); free(fld.avals); free(fld.vs);
-    free(fld.sol_mdot);
-    free(fld.torque);
+    free_field(&fld);
     free_grid();
     free_matrix();
+    free_steady_state_field(&fld_ss);
     return 1;
+}
+
+void allocate_field( Field *tmpfld) {
+     int i;
+     MALLOC_SAFE( (tmpfld->times = (double *)malloc(sizeof(double)*params.nt)));
+     MALLOC_SAFE( (tmpfld->avals =  (double *)malloc(sizeof(double)*params.nt)));
+     MALLOC_SAFE( (tmpfld->vs = (double *)malloc(sizeof(double)*params.nt)));
+     MALLOC_SAFE( (tmpfld->sol = (double *)malloc(sizeof(double)*NR*params.nt)));
+     MALLOC_SAFE( (tmpfld->sol_mdot =  (double *)malloc(sizeof(double)*NR*params.nt)));
+     MALLOC_SAFE( (tmpfld->torque = (double *)malloc(sizeof(double)*NR*params.nt)));
+     MALLOC_SAFE( (tmpfld->lami =  (double *)malloc(sizeof(double)*NR)));
+     MALLOC_SAFE( (tmpfld->mdoti = (double *)malloc(sizeof(double)*NR)));
+
+     MALLOC_SAFE( (tmpfld->mdot_ss =  (double *)malloc(sizeof(double)*params.nt)));
+     MALLOC_SAFE( (tmpfld->vs_ss = (double *)malloc(sizeof(double)*params.nt)));
+     MALLOC_SAFE( (tmpfld->sol_ss = (double *)malloc(sizeof(double)*NR*params.nt)));
+    MALLOC_SAFE( (tmpfld->lamp = (double *)malloc(sizeof(double)*NR*params.nt)));
+     MALLOC_SAFE( (tmpfld->efficiency = (double *)malloc(sizeof(double)*params.nt)));
+    for(i=0;i<NR;i++) {
+        tmpfld->lami[i] = 0;
+        tmpfld->mdoti[i] = 0;
+    }
+
+    for(i=0;i<params.nt;i++) {
+        tmpfld->times[i] = 0;
+        tmpfld->avals[i] = 0;
+        tmpfld->vs[i] = 0;
+        tmpfld->vs_ss[i] = 0;
+        tmpfld->mdot_ss[i] = 0;
+        tmpfld->efficiency[i] = 0;
+
+    }
+
+    for(i=0;i<NR*params.nt;i++) {
+        tmpfld->sol[i]= 0;
+        tmpfld->sol_mdot[i]=0;
+        tmpfld->lamp[i] = 0;
+        tmpfld->sol_ss[i] = 0;
+
+    }
+    return;
+}
+
+void free_field( Field *tmpfld) {
+
+    free(tmpfld->times);
+    free(tmpfld->avals);
+    free(tmpfld->vs);
+    free(tmpfld->sol);
+    free(tmpfld->sol_mdot);
+    free(tmpfld->torque);
+    free(tmpfld->lami);
+    free(tmpfld->mdoti);
+    free(tmpfld->mdot_ss);
+    free(tmpfld->vs_ss);
+    free(tmpfld->sol_ss);
+    free(tmpfld->lamp);
+    free(tmpfld->efficiency);
+    return;
 }
 
 void advance_system(double dt, double *t, double tend) { 
@@ -249,10 +317,10 @@ void crank_nicholson_step(double dt, double aplanet, double *y) {
 
 void trisolve(double *ld, double *md, double *ud, double *d,double *sol,int n) {
     int i;
-
-    double *cp = (double *)malloc(sizeof(double)*(n-1));
-    double *bp = (double *)malloc(sizeof(double)*n);
-    double *dp = (double *)malloc(sizeof(double)*n);
+    double *cp, *bp, *dp;
+    MALLOC_SAFE(( cp =  (double *)malloc(sizeof(double)*(n-1))));
+    MALLOC_SAFE(( bp =  (double *)malloc(sizeof(double)*n)));
+    MALLOC_SAFE(( dp =  (double *)malloc(sizeof(double)*n)));
 
     for(i=0;i<n-1;i++) {
         cp[i] = 0;
@@ -337,10 +405,10 @@ void init_lam(void) {
 void set_matrix(void) {
     int i;
     matrix.size = NR;
-    matrix.ld = (double *)malloc(sizeof(double)*(NR-1));
-    matrix.md = (double *)malloc(sizeof(double)*NR);
-    matrix.ud = (double *)malloc(sizeof(double)*(NR-1));
-    matrix.fm = (double *)malloc(sizeof(double)*NR); 
+    MALLOC_SAFE(( matrix.ld = (double *)malloc(sizeof(double)*(NR-1))));
+    MALLOC_SAFE(( matrix.md = (double *)malloc(sizeof(double)*NR)));
+    MALLOC_SAFE(( matrix.ud =  (double *)malloc(sizeof(double)*(NR-1))));
+    MALLOC_SAFE(( matrix.fm =  (double *)malloc(sizeof(double)*NR))); 
  
     printf("Initializing matrices...\n"); 
     for(i=0;i<NR-1;i++) {
@@ -356,14 +424,15 @@ void set_matrix(void) {
 }
 
 void set_grid(void) {
-    rc = (double *)malloc(sizeof(double)*NR);
-    rmin = (double *)malloc(sizeof(double)*NR);
-    lam = (double *)malloc(sizeof(double)*NR);
-    mdot = (double *)malloc(sizeof(double)*NR);
-    dr  = (double *)malloc(sizeof(double)*NR);
-    dlr = log(params.ro/params.ri)/((double)NR);
-    lrc = (double *)malloc(sizeof(double)*NR);
-    lrmin = (double *)malloc(sizeof(double)*NR);
+    MALLOC_SAFE(( rc =  (double *)malloc(sizeof(double)*NR)));
+    MALLOC_SAFE((rmin =  (double *)malloc(sizeof(double)*NR)));
+    MALLOC_SAFE((lam =  (double *)malloc(sizeof(double)*NR)));
+    MALLOC_SAFE((mdot = (double *)malloc(sizeof(double)*NR)));
+    MALLOC_SAFE((dr  =  (double *)malloc(sizeof(double)*NR)));
+    dlr = log(params.ro/params.ri)/((double)(NR-1));
+    MALLOC_SAFE((lrc = (double *)malloc(sizeof(double)*NR)));
+    MALLOC_SAFE((lrmin = (double *)malloc(sizeof(double)*NR)));
+
 
 
     int i;
@@ -431,9 +500,11 @@ void set_params(void) {
      printf("Planet properties:\n \
             \ta = %lg\n \
             \tmass = %lg mth = %.2e Mstar = %.2e mvisc\n \
+            \tK = %.2e\n \
             \trh = %lg = %lg h\n",
             planet.a, 
             planet.mp,planet.mp*params.mth,planet.mp/params.mvisc,
+            planet.mp*params.h/params.alpha,
             planet.rh, planet.rh/params.h);
      printf("\tplanet_torque = %s\n \
              \tmove_planet = %s\n \
@@ -575,7 +646,8 @@ void move_planet_implicit(double dt, double *y, double *vs, double *a) {
     double a_old = *a;
     double args[2] = {dt,a_old};
     double a_new;
-    double *lam_old = (double *)malloc(sizeof(double)*NR);
+    double *lam_old;
+     MALLOC_SAFE(( lam_old =(double *)malloc(sizeof(double)*NR)));
     memcpy(&lam_old[0],&y[0],sizeof(double)*NR);
     *a = secant_method(&planet_zero_function_euler,a_old, .9*a_old, lam_old,tol,args); 
     memcpy(&y[0],&lam_old[0],sizeof(double)*NR);
@@ -587,7 +659,7 @@ void move_planet_implicit(double dt, double *y, double *vs, double *a) {
     double args[2] = {dt,rhs};
     double a_old = planet.a;
     double tol = 1e-4;
-    planet.a = secant_method(&planet_zero_function,a_old, .5*a_old,tol,args)
+    planet.a = secant_method*(&planet_zero_function,a_old, .5*a_old,tol,args)
     */
     return;
 
@@ -814,12 +886,10 @@ void set_bool(char *buff, int *val) {
     printf("Recieved string %s\n", buff);
     if ( (!strncmp(buff,"TRUE",MAXSTRLEN)) || (!strncmp(buff,"true",MAXSTRLEN)) || (!strncmp(buff,"True",MAXSTRLEN)) || (!strncmp(buff,"T",MAXSTRLEN)) || (!strncmp(buff,"T",MAXSTRLEN)) || (!strncmp(buff,"1",MAXSTRLEN))) {
         *val = TRUE;
-        printf("Setting %s to TRUE\n",buff);
-    }
+            }
     else {
         *val = FALSE;
-        printf("Setting %s to FALSE\n",buff);
-    }
+            }
     return;
 
 }
@@ -851,6 +921,7 @@ void write_hdf5_file(void) {
   hid_t solution_id = H5Gcreate(root_id,"Solution",0);
   hid_t matrix_id = H5Gcreate(root_id,"Matrix",0);
   hid_t params_id = H5Gcreate(root_id,"Parameters",0);
+    hid_t steadystate_id = H5Gcreate(root_id,"SteadyState",0);
 
 
     hsize_t dims1[1] = {NR};
@@ -880,6 +951,12 @@ void write_hdf5_file(void) {
      write_hdf5_double(fld.avals,dims1_t,1,solution_id,"avals");
      write_hdf5_double(fld.vs,dims1_t,1,solution_id,"vs");
   
+// Steady State Solution
+    write_hdf5_double(fld.sol_ss,dims2,2,steadystate_id,"lam_ss");
+    write_hdf5_double(fld.lamp,dims2,2,steadystate_id,"lamp");
+    write_hdf5_double(fld.mdot_ss,dims1_t,1,steadystate_id,"mdot_ss");
+    write_hdf5_double(fld.vs_ss,dims1_t,1,steadystate_id,"vs_ss");
+    write_hdf5_double(fld.efficiency,dims1_t,1,steadystate_id,"eff");
 
     write_hdf5_params(&params_id);
 
@@ -887,6 +964,8 @@ void write_hdf5_file(void) {
   HDF5_INSERT_ERROR(H5Gclose(matrix_id));
   HDF5_INSERT_ERROR(H5Gclose(solution_id));
  HDF5_INSERT_ERROR(H5Gclose(params_id));
+ HDF5_INSERT_ERROR(H5Gclose(steadystate_id));
+
   HDF5_INSERT_ERROR(H5Gclose(root_id));
   HDF5_INSERT_ERROR(H5Fclose(file_id));
 
@@ -985,47 +1064,91 @@ void write_hdf5_params(hid_t *params_id) {
     return;
 }
 
-void steadystate_config(double *lam_ss, double *mdot_ss, double a, double *vs) {
+void allocate_steady_state_field(SteadyStateField *tmpfld) {
+    int i;
+    MALLOC_SAFE( ( tmpfld->lam = (double *)malloc(sizeof(double)*NR)) );
+    MALLOC_SAFE( ( tmpfld->lam0 = (double *)malloc(sizeof(double)*NR)) );
+    MALLOC_SAFE( ( tmpfld->lamp = (double *)malloc(sizeof(double)*NR)) );
+    MALLOC_SAFE(( tmpfld->ivals = (double *)malloc(sizeof(double)*NR)));
+    MALLOC_SAFE(( tmpfld->kvals = (double *)malloc(sizeof(double)*NR)));
+
+
+    for(i=0;i<NR;i++) {
+        tmpfld->lam[i] = 0;
+        tmpfld->lamp[i] = 0;
+        tmpfld->lam0[i] = 0;
+        tmpfld->ivals[i] = 0;
+        tmpfld->kvals[i] = 0;
+    }
+    return;
+}
+
+void free_steady_state_field(SteadyStateField *tmpfld) {
+    free(tmpfld->lam);
+    free(tmpfld->lam0);
+    free(tmpfld->lamp);
+    free(tmpfld->ivals); 
+    free(tmpfld->kvals);
+
+    return;
+}
+void steadystate_config(SteadyStateField *tmpfld, double a) {
     int i;
     double res;
-    double mdot0_ss;
-    double *ivals = (double *)malloc(sizeof(double)*NR);
-    double *kvals = (double *)malloc(sizeof(double)*NR);
-    ivals[0] = 0;
+
+    tmpfld->a = a;
+
+
+
+
+    tmpfld->ivals[0] = 0;
     for(i=1;i<NR;i++) {
-        res = dr[i]*dTr(rc[i],a)/(3*nu(rc[i])*M_PI*sqrt(rc[i]));
-        ivals[i] = ivals[i-1] + res;
+        res = -dr[i]*dTr(rc[i],a)/(3*nu(rc[i])*M_PI*sqrt(rc[i]));
+        tmpfld->ivals[i] = tmpfld->ivals[i-1] + res;
     }
 
 #pragma omp parallel for private(i)
     for(i=0;i<NR;i++) {
-        ivals[i] = exp(ivals[i]) * pow(rc[i]/params.ri,params.gamma-.5);
+        tmpfld->ivals[i] = exp(tmpfld->ivals[i]) * pow(rc[i]/params.ri,params.gamma-.5);
     }
 
 
-    kvals[i] = 0;
+    tmpfld->kvals[i] = 0;
     for(i=1;i<NR;i++) {
-        res = dr[i]*ivals[i]/(3*nu(rc[i]));
-        kvals[i] = kvals[i-1] + res;
+        res = dr[i]*tmpfld->ivals[i]/(3*nu(rc[i]));
+        tmpfld->kvals[i] = tmpfld->kvals[i-1] + res;
     }
 
-    *mdot_ss = (params.bc_lam[1]*ivals[NR-1] - params.bc_lam[0])/kvals[NR-1];
+    tmpfld->mdot = (params.bc_lam[1]*tmpfld->ivals[NR-1] - params.bc_lam[0])/tmpfld->kvals[NR-1];
+    
 #pragma omp parallel for private(i)
     for(i=0;i<NR;i++) {
-        lam_ss[i] = (params.bc_lam[0] + *mdot_ss * kvals[i])/ivals[i];
+        tmpfld->lam[i] = (params.bc_lam[0] + tmpfld->mdot * tmpfld->kvals[i])/tmpfld->ivals[i];
 
     }
+    tmpfld->mdot0 = 1.5*params.alpha*params.h*params.h;
+    tmpfld->mdot0  *= (params.bc_lam[1]*pow(params.ro,params.gamma-.5)-params.bc_lam[0]*pow(params.ri,params.gamma-.5))/(sqrt(params.ro)-sqrt(params.ri));
 
-    mdot0_ss = 1.5*params.alpha*params.h*params.h;
-    mdot0_ss *= (params.bc_lam[1]*pow(params.ro,params.gamma-.5)-params.bc_lam[0]*pow(params.ri,params.gamma-.5))/(sqrt(params.ro)-sqrt(params.ri));
+    tmpfld->vs = -1.5*params.alpha*params.h*params.h*2*sqrt(a)*(params.bc_lam[1]-params.bc_lam[0]) *(1 - (tmpfld->mdot)/(tmpfld->mdot0));
 
-    *vs = -1.5*params.alpha*params.h*params.h*2*sqrt(a)*(params.bc_lam[1]-params.bc_lam[0]) *(1 - (*mdot_ss)/(mdot0_ss));
+#pragma omp parallel for private(i)
+    for(i=0;i<NR;i++) {
+        
+        tmpfld->lam0[i] = (tmpfld->mdot0) * 2*rc[i] *( 1- sqrt(params.ri/rc[i]))/(3*nu(rc[i]));
+        tmpfld->lam0[i] += params.bc_lam[0] /pow(rc[i]/params.ri,params.gamma-.5);
+       
+        if (tmpfld->lam0[i] == 0) {
+            tmpfld->lamp[i] = 0;
+        }
+        else {
+            tmpfld->lamp[i] = (tmpfld->lam[i] - tmpfld->lam0[i])/(tmpfld->lam0[i]);
+        }
 
-
-    free(ivals); free(kvals);
+    }
 
     return;
 
 }
+
 
 

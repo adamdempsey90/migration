@@ -13,7 +13,9 @@
 //#define INITIAL_NOISE
 #define MAXITERATIONS 300
 #define MAXSTRLEN 300
-#define HDF5_INSERT_ERROR(status)  if (status < 0) printf("HDF5 error\n");
+#define HDF5_INSERT_ERROR(status)  if (status < 0) printf("HDF5 error at line %d\n",__LINE__);
+#define MALLOC_SAFE(ptr) if (ptr == NULL) printf("Malloc error at line %d!\n",__LINE__);
+
 typedef struct Parameters {
     double alpha,h,ri,ro,gamma, mach, mth, mvisc, tvisc; 
     double nu0;
@@ -77,8 +79,27 @@ double *mdoti;
 double *avals;
 double *vs; 
 double *torque;
-
+double *vs_ss;
+double *mdot_ss;
+double *sol_ss;
+double *lamp;
+double *efficiency;
 } Field;
+
+
+typedef struct SteadyStateField {
+    double *lam;
+    double *lamp;
+    double mdot;
+    double a;
+    double vs;
+    double *lam0;
+    double mdot0;
+    double *ivals;
+    double *kvals;
+
+} SteadyStateField;
+
 
 double *rc, *rmin, *lam, *dr;
 double *lrc, *lrmin;
@@ -88,6 +109,7 @@ Parameters params;
 Planet planet; 
 TriDiagMat matrix; 
 Field fld;
+SteadyStateField fld_ss;
 void set_params(void);
 void set_planet(void);
 void set_grid(void);
@@ -121,4 +143,8 @@ void read_input_file(char *fname);
 void write_hdf5_double(double *data, hsize_t *dims, int ndims, hid_t group_path, char *name);
 void write_hdf5_file(void);
 void write_hdf5_params(hid_t *params_id); 
-void steadystate_config(double *lam_ss, double *mdot_ss, double a, double *vs); 
+void allocate_steady_state_field(SteadyStateField *fld); 
+void free_steady_state_field(SteadyStateField *fld) ;
+void steadystate_config(SteadyStateField *fld, double a); 
+void allocate_field(Field *tmpfld);
+void free_field(Field *tmpfld);

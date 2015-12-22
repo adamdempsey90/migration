@@ -1,2 +1,7 @@
 #!/bin/bash
-gcc-4.9 -O3 -Wall -fopenmp migration_fast.c
+if [ $(uname) == Linux ] 
+then
+    gcc -O3 -Wall -fopenmp -g migration_fast.c -lm -lgomp -lhdf5
+else
+    gcc-4.9 -O3 -Wall -fopenmp -g migration_fast.c -lgomp -lhdf5
+fi

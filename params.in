@@ -1,7 +1,7 @@
 #Grid Parameters:
-nr = 256
+nr = 512
 ri = 0.05
-ro = 30
+ro = 100
 
 #Disk Parameters:
 alpha = 0.1
@@ -10,19 +10,19 @@ h = .1
 
 #Boundary Conditions:
 bc_lam_inner = 0.0
-bc_lam_outer = 0.01
+bc_lam_outer = 0.0001
 
 #Time Parameters:
-dt = 1
-nvisc = .1
+dt = 0.3
+nvisc = 0.1
 nt = 100
 release_time = 0
-read_initial_conditions = F
+read_initial_conditions = T
 
 
 #Planet Properties:
 planet_torque = TRUE
-move_planet = F 
+move_planet = T 
 move_planet_implicit = T
 gaussian = FALSE
 onesided = 0

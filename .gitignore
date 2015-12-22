@@ -2,3 +2,5 @@
 *.dat
 *.pdf
 a.out
+*.hdf5
+*.h5
