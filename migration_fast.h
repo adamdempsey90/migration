@@ -121,4 +121,4 @@ void read_input_file(char *fname);
 void write_hdf5_double(double *data, hsize_t *dims, int ndims, hid_t group_path, char *name);
 void write_hdf5_file(void);
 void write_hdf5_params(hid_t *params_id); 
-
+void steadystate_config(double *lam_ss, double *mdot_ss, double a, double *vs); 

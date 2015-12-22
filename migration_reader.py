@@ -1,33 +1,69 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
-class Sim():
-    def __init__(self,fname = 'mg_results.dat', pname = 'planet.dat'):
-        dat_p = np.loadtxt(pname);
-        self.t = dat_p[:,0]
-        self.nt = len(self.t)
-        self.at = dat_p[:,1]
-        self.vst = dat_p[:,2]
+import h5py
 
-        dat = np.loadtxt(fname)
-        self.nr = dat[0,0]
-        self.rc = dat[0,1:]
-        self.rm = dat[1,1:]
-        self.disk_mass = dat[2,0]
-        self.dr = dat[2,1:]
-        self.tvisc = dat[3,0]
-        self.dTr = dat[3,1:]
-        self.lami = dat[4,0]
-        self.lam0 = dat[4,1:]
-        self.lamo = dat[5,0]
-        self.mdot0 = dat[5,1:]
-        self.lams = dat[6:-self.nt,1:].transpose()
-        self.mdots = dat[-self.nt:,1:].transpose()
-        self.vr = -self.mdots/self.lams
-        self.vr0 = -self.mdot0/self.lam0
-        self.lamp = np.zeros(self.lams.shape)
-        for i in range(self.lams.shape[1]):
-            self.lamp[:,i] = (self.lams[:,i]-self.lam0)/self.lam0
+class Parameters():
+    key_vals={'nr':int,'ri':float,'ro':float,'alpha':float,'gamma':float,'h':float,'bc_lam_inner':float,'bc_lam_outer':float,'dt':float,'nvisc':float,'nt':int,'release_time':float,'read_initial_conditions':bool,'planet_torque':bool,'move_planet':bool,'gaussian':bool,'one_sided':float,'a':float,'mp':float,'G1':float,'beta':float,'delta':float,'c':float,'eps': float}
+    def __init__(self,dataspace):
+        for key,datatype in self.key_vals.items():
+            setattr(self,key,dataspace[key].astype(datatype)[0])
+
+class Sim(Parameters):
+    def __init__(self,fname = 'mg_results.dat', pname = 'planet.dat'):
+
+        f = h5py.File('results.hdf5')
+
+        Parameters.__init__(self,f['/Migration/Parameters']['Parameters'])
+
+        sols = f['/Migration/Solution']
+        mesh = f['/Migration/Mesh']
+        mat = f['/Migration/Matrix']
+
+        self.t = sols['times'][:]
+        self.at =sols['avals'][:]
+        self.vs = sols['vs'][:]
+        self.lam = sols['lam'][:]
+        self.mdot = sols['mdot'][:]
+        self.torque= sols['torque'][:]
+
+        self.rc = mesh['rc'][:]
+        self.dr = mesh['dr'][:]
+        self.rmin=mesh['rmin'][:]
+        self.lam0 = mesh['lami'][:]
+        self.mdot0 = mesh['mdoti'][:]
+
+        self.main_diag = mat['md'][:]
+        self.lower_diag = mat['ld'][:]
+        self.upper_diag = mat['ud'][:]
+        self.rhs = mat['fm'][:]
+
+        f.close()
+#
+#        self.t = dat_p[:,0]
+#        self.nt = len(self.t)
+#        self.at = dat_p[:,1]
+#        self.vst = dat_p[:,2]
+#
+#        dat = np.loadtxt(fname)
+#        self.nr = dat[0,0]
+#        self.rc = dat[0,1:]
+#        self.rm = dat[1,1:]
+#        self.disk_mass = dat[2,0]
+#        self.dr = dat[2,1:]
+#        self.tvisc = dat[3,0]
+#        self.dTr = dat[3,1:]
+#        self.lami = dat[4,0]
+#        self.lam0 = dat[4,1:]
+#        self.lamo = dat[5,0]
+#        self.mdot0 = dat[5,1:]
+#        self.lams = dat[6:-self.nt,1:].transpose()
+#        self.mdots = dat[-self.nt:,1:].transpose()
+#        self.vr = -self.mdots/self.lams
+#        self.vr0 = -self.mdot0/self.lam0
+#        self.lamp = np.zeros(self.lams.shape)
+#        for i in range(self.lams.shape[1]):
+#            self.lamp[:,i] = (self.lams[:,i]-self.lam0)/self.lam0
 
 
     def animate(self,tend,skip,tstart=0,q='lam',logx = True,logy=True):

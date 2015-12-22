@@ -83,64 +83,7 @@ int main(void) {
     printf("\n"); 
     printf("Outputting results...\n");
     write_hdf5_file();
-    FILE *fname = fopen("mg_results.dat","w");
-    FILE *pname = fopen("planet.dat","w");
-    for(i=0; i<nt; i++) {
-        fprintf(pname, "%.12g\t%.12g\t%.12g\n",fld.times[i],fld.avals[i],fld.vs[i]);
-    }
-    fclose(pname);
     
-    fprintf(fname, "%d",NR);
-    for(j=0;j<NR;j++) {
-        fprintf(fname, "\t%lg",rc[j]);
-    }
-    fprintf(fname,"\n");
-    fprintf(fname,"%d",nt);
-    for(j=0;j<NR;j++) {
-        fprintf(fname, "\t%lg",rmin[j]);
-    }
-    fprintf(fname,"\n");
-    fprintf(fname,"%.2e",total_mass);
-    for(j=0;j<NR;j++) {
-        fprintf(fname, "\t%lg",dr[j]);
-    }
-    fprintf(fname,"\n");
-    fprintf(fname,"%lg",params.tvisc);
-    for(j=0;j<NR;j++) {
-        fprintf(fname, "\t%lg",fld.torque[j]);
-    }
-    fprintf(fname,"\n");
-
-    fprintf(fname, "%lg",params.bc_lam[0]);
-    for(j=0;j<NR;j++) {
-        fprintf(fname,"\t%lg",fld.lami[j]);
-    }
-    fprintf(fname,"\n");
-
-    fprintf(fname, "%lg",params.bc_lam[1]);
-    for(j=0;j<NR;j++) {
-        fprintf(fname,"\t%lg",fld.mdoti[j]);
-    }
-    fprintf(fname,"\n");
-
-    for(i=0;i<nt;i++) {
-        fprintf(fname,"%lg",fld.times[i]);
-        for(j=0;j<NR;j++) {
-            fprintf(fname,"\t%lg",fld.sol[j+NR*i]);
-        }
-        fprintf(fname,"\n");
-    }
-    for(i=0;i<nt;i++) {
-        fprintf(fname,"-1");
-        for(j=0;j<NR;j++) {
-            fprintf(fname,"\t%lg",fld.sol_mdot[j+NR*i]);
-        }
-        fprintf(fname,"\n");
-    }
-
-    printf("Cleaning up...\n");
-    fclose(fname);
-
     free(fld.lami); free(fld.mdoti);
     free(fld.times); free(fld.sol); free(fld.avals); free(fld.vs);
     free(fld.sol_mdot);
@@ -298,27 +241,6 @@ void crank_nicholson_step(double dt, double aplanet, double *y) {
     matrix.fm[NR-1] = params.bc_lam[1];
 
 
-#ifdef WRITE_MATRIX
-    FILE *fname = fopen("matrix.dat","w");
-
-    for(i=0;i<NR;i++) {
-        fprintf(fname,"%lg\t",matrix.md[i]);
-    }
-    fprintf(fname,"\n0\t");
-    for(i=0;i<NR-1;i++) {
-        fprintf(fname,"%lg\t",matrix.ld[i]);
-    }
-    fprintf(fname,"\n");
-    for(i=0;i<NR-1;i++) {
-        fprintf(fname,"%lg\t",matrix.ud[i]);
-    }
-    fprintf(fname,"0\n");
-    for(i=0;i<NR;i++) {
-        fprintf(fname,"%lg\t",matrix.fm[i]);
-    }
-    fprintf(fname,"\n");
-    fclose(fname);
-#endif
     trisolve(matrix.ld,matrix.md,matrix.ud,matrix.fm,y,NR);
 
 
@@ -1031,7 +953,7 @@ void write_hdf5_params(hid_t *params_id) {
  
       HDF5_INSERT_ERROR(H5Tinsert (memtype, "release_time", HOFFSET (param_t, release_time), H5T_NATIVE_DOUBLE));
  
- HDF5_INSERT_ERROR(H5Tinsert (memtype, "read_intial_conditions", HOFFSET (param_t, read_initial_conditions), H5T_NATIVE_INT));
+ HDF5_INSERT_ERROR(H5Tinsert (memtype, "read_initial_conditions", HOFFSET (param_t, read_initial_conditions), H5T_NATIVE_INT));
  
  HDF5_INSERT_ERROR(H5Tinsert (memtype, "planet_torque", HOFFSET (param_t, planet_torque), H5T_NATIVE_INT));
  
@@ -1062,3 +984,48 @@ void write_hdf5_params(hid_t *params_id) {
 
     return;
 }
+
+void steadystate_config(double *lam_ss, double *mdot_ss, double a, double *vs) {
+    int i;
+    double res;
+    double mdot0_ss;
+    double *ivals = (double *)malloc(sizeof(double)*NR);
+    double *kvals = (double *)malloc(sizeof(double)*NR);
+    ivals[0] = 0;
+    for(i=1;i<NR;i++) {
+        res = dr[i]*dTr(rc[i],a)/(3*nu(rc[i])*M_PI*sqrt(rc[i]));
+        ivals[i] = ivals[i-1] + res;
+    }
+
+#pragma omp parallel for private(i)
+    for(i=0;i<NR;i++) {
+        ivals[i] = exp(ivals[i]) * pow(rc[i]/params.ri,params.gamma-.5);
+    }
+
+
+    kvals[i] = 0;
+    for(i=1;i<NR;i++) {
+        res = dr[i]*ivals[i]/(3*nu(rc[i]));
+        kvals[i] = kvals[i-1] + res;
+    }
+
+    *mdot_ss = (params.bc_lam[1]*ivals[NR-1] - params.bc_lam[0])/kvals[NR-1];
+#pragma omp parallel for private(i)
+    for(i=0;i<NR;i++) {
+        lam_ss[i] = (params.bc_lam[0] + *mdot_ss * kvals[i])/ivals[i];
+
+    }
+
+    mdot0_ss = 1.5*params.alpha*params.h*params.h;
+    mdot0_ss *= (params.bc_lam[1]*pow(params.ro,params.gamma-.5)-params.bc_lam[0]*pow(params.ri,params.gamma-.5))/(sqrt(params.ro)-sqrt(params.ri));
+
+    *vs = -1.5*params.alpha*params.h*params.h*2*sqrt(a)*(params.bc_lam[1]-params.bc_lam[0]) *(1 - (*mdot_ss)/(mdot0_ss));
+
+
+    free(ivals); free(kvals);
+
+    return;
+
+}
+
+
