@@ -1,11 +1,19 @@
 #include "migration_fast.h"
 
-int main(void) {
+int main(int argc, char *argv[]) {
     
     int i,j;
-    
-    printf("Setting parameters...\n");
-    set_params();
+    char parfile[MAXSTRLEN];
+    if (argc < 2) {
+        strcpy(parfile,"params.in");
+    }
+    else {
+        strcpy(parfile,argv[1]);
+    }
+
+
+    printf("Reading parameters from %s...\n",parfile);
+    set_params(parfile);
     
         printf("Setting up grid...\n");
     set_grid();
@@ -472,8 +480,8 @@ double nu(double x) {
 double scaleH(double x) {
     return params.h * x *  pow(x, (params.gamma -.5)/2);
 }
-void set_params(void) {
-    read_input_file("params.in");
+void set_params(char *parfile) {
+    read_input_file(parfile);
     
     params.mach = 1/params.h;
     params.nu0 = params.alpha * params.h*params.h;
@@ -565,11 +573,11 @@ double smoothing(double x, double x0, double w) {
 
 double calc_drift_speed(double a, double *y) {
     int i;
-    double res = 0;
+    double res;
 
-
+    res = .5*(dTr(rc[0],a)*y[0] + dTr(rc[NR-1],a)*y[NR-1]);
 #pragma omp parallel for reduction(+:res)    
-    for(i=0;i<NR;i++) {
+    for(i=1;i<NR-1;i++) {
         res += dTr(rc[i],a)*y[i];
     }
 
@@ -814,7 +822,6 @@ void read_input_file(char *fname) {
     int read_res;
     FILE *f;
 
-    printf("Reading input file %s...\n", fname);
 
 
 

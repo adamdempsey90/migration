@@ -13,15 +13,15 @@ bc_lam_inner = 0.0
 bc_lam_outer = 0.0001
 
 #Time Parameters:
-dt = 0.3
-nvisc = 0.1
-nt = 100
+dt = .3 
+nvisc = 0.3
+nt = 1000
 release_time = 0
 read_initial_conditions = T
 
 
 #Planet Properties:
-planet_torque = TRUE
+planet_torque = T
 move_planet = T 
 move_planet_implicit = T
 gaussian = FALSE

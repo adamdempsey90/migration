@@ -2,19 +2,72 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
 import h5py
-
+from collections import OrderedDict
 class Parameters():
-    key_vals={'nr':int,'ri':float,'ro':float,'alpha':float,'gamma':float,'h':float,'bc_lam_inner':float,'bc_lam_outer':float,'dt':float,'nvisc':float,'nt':int,'release_time':float,'read_initial_conditions':bool,'planet_torque':bool,'move_planet':bool,'gaussian':bool,'one_sided':float,'a':float,'mp':float,'G1':float,'beta':float,'delta':float,'c':float,'eps': float}
-    def __init__(self,dataspace):
-        for key,datatype in self.key_vals.items():
-            setattr(self,key,dataspace[key].astype(datatype)[0])
+    key_vals=OrderedDict([
+        ('nr',int),
+        ('ri',float),
+        ('ro',float),
+        ('alpha',float),
+        ('gamma',float),
+        ('h',float),
+        ('bc_lam_inner',float),
+        ('bc_lam_outer',float),
+        ('dt',float),
+        ('nvisc',float),
+        ('nt',int),
+        ('release_time',float),
+        ('read_initial_conditions',bool),
+        ('planet_torque',bool),
+        ('move_planet',bool),
+        ('gaussian',bool),
+        ('one_sided',float),
+        ('a',float),
+        ('mp',float),
+        ('G1',float),
+        ('beta',float),
+        ('delta',float),
+        ('c',float),
+        ('eps', float),
+        ('outputname',str)])
+
+    comment_lines = {'nr':'#Grid Parameters:', 'alpha':'\n\nDisk Parameters:','bc_lam_inner':'\n\n#Boundary Conditions:', 'dt':'\n\n#Time Parameters:','planet_torque':'\n\n#Planet Properties:'}
+
+    def __init__(self,dataspace,fname='results.hdf5'):
+           # We read in the from an hdf5 file
+        setattr(self,'outputname',fname)
+        for key,datatype in self.key_vals.items()[:-1]:
+            try:
+                setattr(self,key,dataspace[key].astype(datatype)[0])
+            except AttributeError:
+                setattr(self,key,getattr(dataspace,key))
+
+    def dump_params(self,fname='params_py.in',**kargs):
+
+        lines =[]
+        for key in self.key_vals.keys():
+            try:
+                lines.append(self.comment_lines[key])
+            except KeyError:
+                pass
+
+            if key in kargs.keys():
+                val = kargs[key]
+            else:
+                val = getattr(self,key)
+
+            lines.append(str(key) + ' = ' + str(val))
+
+        with open(fname,'w') as f:
+            f.write('\n'.join(lines))
+
 
 class Sim(Parameters):
     def __init__(self,fname = 'results.hdf5'):
 
         f = h5py.File(fname,'r')
 
-        Parameters.__init__(self,f['/Migration/Parameters']['Parameters'])
+        Parameters.__init__(self,f['/Migration/Parameters']['Parameters'],fname=fname)
 
         sols = f['/Migration/Solution']
         mesh = f['/Migration/Mesh']
@@ -66,6 +119,8 @@ class Sim(Parameters):
         self.lamo = self.bc_lam_outer
 
         self.B = 2*self.at*(self.lamo-self.lami)/(self.mp*self.mth)
+        self.Bfac = (np.sqrt(self.ro)-np.sqrt(self.ri))/(np.sqrt(self.at)-np.sqrt(self.ri))
+        self.freduc  = self.B * self.Bfac * (1 - self.eff)
 #        self.dTr = dat[3,1:]
 #        self.lami = dat[4,0]
 #        self.lam0 = dat[4,1:]
@@ -81,6 +136,8 @@ class Sim(Parameters):
 
     def nu(self,x):
         return self.alpha*self.h*self.h * pow(x,self.gamma)
+    def vr_nu(self,x):
+        return -1.5 * self.nu(x)/x
 
     def animate(self,tend,skip,tstart=0,q='lam',logx = True,logy=True):
         fig=plt.figure()
@@ -159,7 +216,16 @@ class Sim(Parameters):
         axes[1,1].plot(self.at,dat,'.-')
         axes[1,1].set_xlabel('$a$',fontsize=20)
         axes[1,1].set_ylabel('$\\dot{a}$',fontsize=20)
-        axes[1,1].set_yscale('log')
+        if scale:
+            axes[1,1].set_yscale('log')
+            axes[1,1].plot(self.at,self.freduc,'+r')
+        else:
+            axes[1,1].plot(self.at,self.freduc*self.vr_nu(self.at),'+r')
+
+        axes[0,1].plot(self.at,1-self.eff,'.-',label='f_mdot')
+        axes[0,1].plot(self.at,self.B,'.-',label='Mdisk/Mplanet')
+        axes[0,1].legend(loc='best')
+        axes[0,1].set_yscale('log')
 
         fig.canvas.draw()
         return axes,fig

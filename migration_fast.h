@@ -110,7 +110,7 @@ Planet planet;
 TriDiagMat matrix; 
 Field fld;
 SteadyStateField fld_ss;
-void set_params(void);
+void set_params(char *);
 void set_planet(void);
 void set_grid(void);
 void free_grid(void);
