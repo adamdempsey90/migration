@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
 import h5py
 from collections import OrderedDict
+from subprocess import call
+
 class Parameters():
     key_vals=OrderedDict([
         ('nr',int),
@@ -20,6 +22,7 @@ class Parameters():
         ('read_initial_conditions',bool),
         ('planet_torque',bool),
         ('move_planet',bool),
+        ('move_planet_implicit',bool),
         ('gaussian',bool),
         ('one_sided',float),
         ('a',float),
@@ -31,7 +34,7 @@ class Parameters():
         ('eps', float),
         ('outputname',str)])
 
-    comment_lines = {'nr':'#Grid Parameters:', 'alpha':'\n\nDisk Parameters:','bc_lam_inner':'\n\n#Boundary Conditions:', 'dt':'\n\n#Time Parameters:','planet_torque':'\n\n#Planet Properties:'}
+    comment_lines = {'nr':'#Grid Parameters:', 'alpha':'\n\n#Disk Parameters:','bc_lam_inner':'\n\n#Boundary Conditions:', 'dt':'\n\n#Time Parameters:','planet_torque':'\n\n#Planet Properties:'}
 
     def __init__(self,dataspace,fname='results.hdf5'):
            # We read in the from an hdf5 file
@@ -58,8 +61,19 @@ class Parameters():
 
             lines.append(str(key) + ' = ' + str(val))
 
+        lines = '\n'.join(lines) + '\n'
+        print lines
         with open(fname,'w') as f:
-            f.write('\n'.join(lines))
+            f.write(lines)
+
+    def run(self,fname='params_py.in',**kargs):
+
+        self.dump_params(fname,**kargs)
+        call(['./a.out',fname])
+        try:
+            return kargs['outputname']
+        except KeyError:
+            return self.outputname
 
 
 class Sim(Parameters):
@@ -97,7 +111,7 @@ class Sim(Parameters):
         self.mdot_ss = ss['mdot_ss'][:]
         self.vs_ss = ss['vs_ss'][:]
         self.eff = ss['eff'][:]
-        self.mdot0 = self.eff/self.mdot_ss
+        self.mdot0 = self.mdot_ss/self.eff
 
 
         f.close()

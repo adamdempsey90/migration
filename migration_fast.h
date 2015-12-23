@@ -45,6 +45,7 @@ typedef struct param_t {
     int read_initial_conditions;
     int planet_torque;
     int move_planet;
+    int move_planet_implicit;
     int gaussian;
     double one_sided;
     double a;

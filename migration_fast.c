@@ -863,7 +863,7 @@ void read_input_file(char *fname) {
     read_res=fscanf(f,"gaussian = %s \n",tmpstr);
     set_bool(tmpstr,&planet.gaussian);
     
-    read_res=fscanf(f,"onesided = %lg \n",&planet.onesided);
+    read_res=fscanf(f,"one_sided = %lg \n",&planet.onesided);
     read_res=fscanf(f,"a  = %lg \n",&planet.a);
     read_res=fscanf(f,"mp = %lg \n",&planet.mp);
     read_res=fscanf(f,"G1 = %lg \n",&planet.G1);
@@ -1004,6 +1004,7 @@ void write_hdf5_params(hid_t *params_id) {
     out_par.read_initial_conditions = params.read_initial_conditions;
     out_par.planet_torque = params.planet_torque;
     out_par.move_planet = params.move_planet;
+    out_par.move_planet_implicit = params.move_planet_implicit;
     out_par.gaussian = planet.gaussian;
     out_par.one_sided = planet.onesided;
     out_par.a = planet.a;
@@ -1045,6 +1046,7 @@ void write_hdf5_params(hid_t *params_id) {
  
  HDF5_INSERT_ERROR(H5Tinsert (memtype, "move_planet", HOFFSET (param_t, move_planet), H5T_NATIVE_INT));
  
+ HDF5_INSERT_ERROR(H5Tinsert (memtype, "move_planet_implicit", HOFFSET (param_t, move_planet_implicit), H5T_NATIVE_INT));
  HDF5_INSERT_ERROR(H5Tinsert (memtype, "gaussian", HOFFSET (param_t, gaussian), H5T_NATIVE_INT));
  
 
