@@ -3,5 +3,10 @@ if [ $(uname) == Linux ]
 then
     gcc -O3 -Wall -fopenmp -g migration_fast.c -lm -lgomp -lhdf5
 else
-    gcc-4.9 -O3 -Wall -fopenmp -g migration_fast.c -lgomp -lhdf5
+    if [ $USER == zeus ]
+    then
+        INCFLAGS=-I/usr/local/include
+        LIBFLAGS=-L/usr/local/lib
+    fi
+    gcc-4.9 -O3 -Wall -fopenmp -g $INCFLAGS migration_fast.c $LIBFLAGS -lgomp -lhdf5
 fi
