@@ -109,11 +109,10 @@ class Sim(Parameters):
         self.lam_ss = ss['lam_ss'][:].transpose()
         self.lamp = ss['lamp'][:].transpose()
         self.mdot_ss = ss['mdot_ss'][:]
+
         self.vs_ss = ss['vs_ss'][:]
         self.eff = ss['eff'][:]
         self.mdot0 = self.mdot_ss/self.eff
-
-
         f.close()
 #
 #        self.t = dat_p[:,0]
@@ -131,7 +130,7 @@ class Sim(Parameters):
         self.tvisc = self.ro**2/(self.nu(self.ro))
         self.lami = self.bc_lam_inner
         self.lamo = self.bc_lam_outer
-
+        self.K = self.mp * self.h/self.alpha
         self.B = 2*self.at*(self.lamo-self.lami)/(self.mp*self.mth)
         self.Bfac = (np.sqrt(self.ro)-np.sqrt(self.ri))/(np.sqrt(self.at)-np.sqrt(self.ri))
         self.freduc  = self.B * self.Bfac * (1 - self.eff)
@@ -143,6 +142,13 @@ class Sim(Parameters):
 #        self.lams = dat[6:-self.nt,1:].transpose()
 #        self.mdots = dat[-self.nt:,1:].transpose()
         self.vr = -self.mdot/self.lam
+        self.vr0 = np.zeros(self.vr.shape)
+        self.vr_ss = np.zeros(self.vr.shape)
+        for i in range(self.vr0.shape[1]):
+            self.vr0[:,i] = -self.mdot0[i]/self.lam0
+            self.vr_ss[:,i] = -self.mdot_ss[i]/self.lam_ss[:,i]
+        self.beta = self.vr_ss/self.vr0
+
 #        self.vr0 = -self.mdot0/self.lam0
 #        self.lamp = np.zeros(self.lam.shape)
 #        for i in range(self.lam.shape[1]):
