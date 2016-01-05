@@ -62,7 +62,7 @@ class Parameters():
             lines.append(str(key) + ' = ' + str(val))
 
         lines = '\n'.join(lines) + '\n'
-        print lines
+
         with open(fname,'w') as f:
             f.write(lines)
 
@@ -147,7 +147,7 @@ class Sim(Parameters):
         for i in range(self.vr0.shape[1]):
             self.vr0[:,i] = -self.mdot0[i]/self.lam0
             self.vr_ss[:,i] = -self.mdot_ss[i]/self.lam_ss[:,i]
-        self.beta = self.vr_ss/self.vr0
+        self.beta_reduc = self.vr_ss/self.vr0
 
 #        self.vr0 = -self.mdot0/self.lam0
 #        self.lamp = np.zeros(self.lam.shape)
@@ -238,9 +238,9 @@ class Sim(Parameters):
         axes[1,1].set_ylabel('$\\dot{a}$',fontsize=20)
         if scale:
             axes[1,1].set_yscale('log')
-            axes[1,1].plot(self.at,self.freduc,'+r')
+            axes[1,1].plot(self.at,self.vs_ss/self.vr_nu(self.at),'+r') #self.freduc,'+r')
         else:
-            axes[1,1].plot(self.at,self.freduc*self.vr_nu(self.at),'+r')
+            axes[1,1].plot(self.at,self.vs_ss,'+r') #self.freduc*self.vr_nu(self.at),'+r')
 
         axes[0,1].plot(self.at,1-self.eff,'.-',label='f_mdot')
         axes[0,1].plot(self.at,self.B,'.-',label='Mdisk/Mplanet')

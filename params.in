@@ -1,7 +1,7 @@
 #Grid Parameters:
-nr = 512
-ri = 0.05
-ro = 100
+nr = 1024
+ri = 0.1
+ro = 30
 
 #Disk Parameters:
 alpha = 0.1
@@ -9,8 +9,8 @@ gamma = 0.5
 h = .1
 
 #Boundary Conditions:
-bc_lam_inner = 0.00000001
-bc_lam_outer = 0.000001
+bc_lam_inner = 0.0
+bc_lam_outer = 0.00001
 
 #Time Parameters:
 dt = 100 
@@ -26,7 +26,7 @@ move_planet = F
 move_planet_implicit = T
 gaussian = FALSE
 one_sided = 0
-a  = 20.
+a  = 10.
 mp = 1
 G1 = 0
 beta = 0.66666667

@@ -286,7 +286,7 @@ void crank_nicholson_step(double dt, double aplanet, double *y) {
 
 
 
-#pragma omp parallel for private(rm,rp,am,ap,bm,bp) shared(matrix,rc,rmin)
+#pragma omp parallel for private(i,rm,rp,am,ap,bm,bp) shared(matrix,rc,rmin)
     for(i=1;i<NR-1;i++) {
         rm = rmin[i];
         rp = rmin[i+1];
@@ -301,7 +301,7 @@ void crank_nicholson_step(double dt, double aplanet, double *y) {
     
     matvec(matrix.ld,matrix.md,matrix.ud,lam,matrix.fm,NR);
 
-#pragma omp parallel for shared(y,dr,matrix)
+#pragma omp parallel for shared(i,y,dr,matrix)
     for(i=0;i<NR;i++) {
         matrix.fm[i] += dr[i]*y[i];
         matrix.md[i] = dr[i] - matrix.md[i];
@@ -573,14 +573,14 @@ double smoothing(double x, double x0, double w) {
 
 double calc_drift_speed(double a, double *y) {
     int i;
-    double res;
+    double res = 0;
 
-    res = .5*(dTr(rc[0],a)*y[0] + dTr(rc[NR-1],a)*y[NR-1]);
-#pragma omp parallel for reduction(+:res)    
+#pragma omp parallel for private(i) reduction(+:res) 
     for(i=1;i<NR-1;i++) {
         res += dTr(rc[i],a)*y[i];
     }
 
+    res += .5*(dTr(rc[0],a)*y[0] + dTr(rc[NR-1],a)*y[NR-1]);
     res *= -2*dlr*sqrt(a)/(planet.mp*params.mth);
 
     return res;
@@ -627,22 +627,66 @@ void set_mdot(int planet_torque) {
 }
 
 
+int locate(double *xx, int nx, double x) {
+/* Bisection lookup routine. 
+ * Given the ordered abcissas xx[0:nx-1], find the value of index j
+ * such that x lies between xx[j] and xx[j+1].
+ * Return *j=-1 or *j=nx if x lies outside the range of xx. 
+*/
+    int j;
+    int ju, jm, jl;
+    int ascnd;
+
+    jl = -1;
+    ju = nx;
+
+    ascnd = (xx[nx-1] >= xx[0]);
+
+    while (ju-jl > 1) {
+        jm = (ju + jl) >> 1;
+        if (x >= xx[jm] == ascnd) {
+            jl = jm;
+        }
+        else {
+            ju = jm;
+        }
+    }
+    if (x == xx[0]) {
+        return 0;
+    }
+    else {
+        if (x == xx[nx-1]) {
+            return  nx-2;
+        }
+        else {
+            return  jl;
+        }
+    }
+}
 
 void linear_interpolation(double *x,double *y,double *xd, double *yd,int nx,int nd) {
 /* Linear interpolation of the data xd,yd with nd data points onto the nx x-values 
  * stored in x. Result stored in y. Both x and xd should be in order.
 */
-    int  i,j,jstart;
-    
-    jstart = 0;
+    int  i,j;
+  
     for(i=0;i<nx;i++) {
-        for(j=jstart;j<nd;j++) {
-            if (x[i] <= xd[j]) {
-                y[i] = yd[j-1] + (yd[j]-yd[j-1])*(x[i]-xd[j-1])/(xd[j]-xd[j-1]);
+        j = locate(xd,nd,x[i]);
+        if (j==-1) {
+            printf("Grid point %lg below interpolation range %lg\n",x[i],xd[0]);
+            y[i] = 0;
+        }
+        else {
+            if (j==nd) {
+                printf("Grid point %lg above interpolation range %lg\n",x[i],xd[nd-1]);
+                y[i] = 0;
+            }
+            else {
+                y[i] = yd[j] + (yd[j+1] - yd[j])*(x[i]-xd[j])/(xd[j+1]-xd[j]);
             }
         }
-    }
 
+    }
     return;
 }
 

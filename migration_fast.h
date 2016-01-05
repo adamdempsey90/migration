@@ -149,3 +149,5 @@ void free_steady_state_field(SteadyStateField *fld) ;
 void steadystate_config(SteadyStateField *fld, double a); 
 void allocate_field(Field *tmpfld);
 void free_field(Field *tmpfld);
+int locate(double *, int , double);
+void linear_interpolation(double *, double *, double *, double *, int, int);
