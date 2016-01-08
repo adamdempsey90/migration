@@ -24,6 +24,7 @@ class Parameters():
         ('move_planet',bool),
         ('move_planet_implicit',bool),
         ('gaussian',bool),
+        ('hs_visc',bool),
         ('one_sided',float),
         ('a',float),
         ('mp',float),
@@ -99,7 +100,7 @@ class Sim(Parameters):
         self.rmin=mesh['rmin'][:]
         self.lam0 = mesh['lami'][:]
         self.mdot0 = mesh['mdoti'][:]
-
+        self.nu_grid = mesh['nu_grid'][:]
         self.main_diag = mat['md'][:]
         self.lower_diag = mat['ld'][:]
         self.upper_diag = mat['ud'][:]

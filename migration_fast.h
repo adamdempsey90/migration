@@ -23,6 +23,7 @@ typedef struct Parameters {
     double dt,nvisc;
     int planet_torque, move_planet,move_planet_implicit;
     int read_initial_conditions;
+    int hs_visc;
     double bc_lam[2];
     double release_time;
     char outputname[MAXSTRLEN];
@@ -47,6 +48,7 @@ typedef struct param_t {
     int move_planet;
     int move_planet_implicit;
     int gaussian;
+    int hs_visc;
     double one_sided;
     double a;
     double mp;
@@ -85,6 +87,7 @@ double *mdot_ss;
 double *sol_ss;
 double *lamp;
 double *efficiency;
+double *nu_grid;
 } Field;
 
 

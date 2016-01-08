@@ -26,6 +26,9 @@ int main(int argc, char *argv[]) {
     }
 
     allocate_field(&fld);
+    for(i=0;i<NR;i++) {
+        fld.nu_grid[i] = nu(rc[i]);
+    }
     allocate_steady_state_field(&fld_ss);
     
        
@@ -126,9 +129,12 @@ void allocate_field( Field *tmpfld) {
      MALLOC_SAFE( (tmpfld->sol_ss = (double *)malloc(sizeof(double)*NR*params.nt)));
     MALLOC_SAFE( (tmpfld->lamp = (double *)malloc(sizeof(double)*NR*params.nt)));
      MALLOC_SAFE( (tmpfld->efficiency = (double *)malloc(sizeof(double)*params.nt)));
+
+     MALLOC_SAFE( (tmpfld->nu_grid =  (double *)malloc(sizeof(double)*NR)));
     for(i=0;i<NR;i++) {
         tmpfld->lami[i] = 0;
         tmpfld->mdoti[i] = 0;
+        tmpfld->nu_grid[i] = 0;
     }
 
     for(i=0;i<params.nt;i++) {
@@ -166,6 +172,7 @@ void free_field( Field *tmpfld) {
     free(tmpfld->sol_ss);
     free(tmpfld->lamp);
     free(tmpfld->efficiency);
+    free(tmpfld->nu_grid);
     return;
 }
 
@@ -457,7 +464,7 @@ void set_grid(void) {
         lrmin[i] = .5*(lrc[i]+lrc[i-1]);
         rmin[i] = exp(lrmin[i]);
     }
-
+    
     set_mdot(params.planet_torque);
     return;
 
@@ -475,7 +482,17 @@ void free_matrix(void) {
     return;
 }
 double nu(double x) {
-    return params.nu0 * pow(x,params.gamma);
+//    return params.nu0 * pow(x,params.gamma);
+      double res = params.nu0 * pow(x,params.gamma);
+
+      if (params.hs_visc) {
+          double rh = pow(planet.mp*params.mth/3.,1./3) * planet.a;
+          if (fabs(x-planet.a) <= 2*rh) {
+                res += planet.mp*params.mth *pow(planet.a,params.gamma)/(2*M_PI);
+          }
+
+      }
+      return res;
 }
 double scaleH(double x) {
     return params.h * x *  pow(x, (params.gamma -.5)/2);
@@ -550,7 +567,7 @@ double dTr(double x,double a) {
 
         norm = planet.eps * a*M_PI*(planet.mp*params.mth)*(planet.mp*params.mth);
     
-        right_fac = norm*pow(a/fmax(scaleH(x),fabs(x-a)),4);
+        right_fac = norm*pow(x/fmax(scaleH(x),fabs(x-a)),4);
     
         left_fac = -norm*pow(x/fmax(scaleH(x),fabs(x-a)),4);    
         
@@ -907,6 +924,9 @@ void read_input_file(char *fname) {
     read_res=fscanf(f,"gaussian = %s \n",tmpstr);
     set_bool(tmpstr,&planet.gaussian);
     
+    read_res=fscanf(f,"hs_visc = %s \n",tmpstr);
+    set_bool(tmpstr,&params.hs_visc);
+
     read_res=fscanf(f,"one_sided = %lg \n",&planet.onesided);
     read_res=fscanf(f,"a  = %lg \n",&planet.a);
     read_res=fscanf(f,"mp = %lg \n",&planet.mp);
@@ -986,6 +1006,7 @@ void write_hdf5_file(void) {
       write_hdf5_double(rmin,dims1,1,mesh_id,"rmin");
       write_hdf5_double(fld.lami,dims1,1,mesh_id,"lami");
       write_hdf5_double(fld.mdoti,dims1,1,mesh_id,"mdoti");
+      write_hdf5_double(fld.nu_grid,dims1,1,mesh_id,"nu_grid");
 // Write Matrix
    write_hdf5_double(matrix.md,dims1,1,matrix_id,"md");
     write_hdf5_double(matrix.ld,dims1_small,1,matrix_id,"ld");
@@ -1050,6 +1071,7 @@ void write_hdf5_params(hid_t *params_id) {
     out_par.move_planet = params.move_planet;
     out_par.move_planet_implicit = params.move_planet_implicit;
     out_par.gaussian = planet.gaussian;
+    out_par.hs_visc = params.hs_visc;
     out_par.one_sided = planet.onesided;
     out_par.a = planet.a;
     out_par.mp = planet.mp;
@@ -1093,6 +1115,7 @@ void write_hdf5_params(hid_t *params_id) {
  HDF5_INSERT_ERROR(H5Tinsert (memtype, "move_planet_implicit", HOFFSET (param_t, move_planet_implicit), H5T_NATIVE_INT));
  HDF5_INSERT_ERROR(H5Tinsert (memtype, "gaussian", HOFFSET (param_t, gaussian), H5T_NATIVE_INT));
  
+ HDF5_INSERT_ERROR(H5Tinsert (memtype, "hs_visc", HOFFSET (param_t, hs_visc), H5T_NATIVE_INT));
 
     HDF5_INSERT_ERROR(H5Tinsert (memtype, "one_sided", HOFFSET (param_t, one_sided), H5T_NATIVE_DOUBLE));
       HDF5_INSERT_ERROR(H5Tinsert (memtype, "a", HOFFSET (param_t, a), H5T_NATIVE_DOUBLE));
