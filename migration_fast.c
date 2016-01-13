@@ -10,8 +10,9 @@ int main(int argc, char *argv[]) {
     else {
         strcpy(parfile,argv[1]);
     }
-
-
+#ifdef NU
+    printf("Code compiled with CONSTANT VISCOSITY.\n");
+#endif
     printf("Reading parameters from %s...\n",parfile);
     set_params(parfile);
     
@@ -305,7 +306,16 @@ void crank_nicholson_step(double dt, double aplanet, double *y) {
         matrix.ld[i-1] = (-am + bm)*dt/2.;
         matrix.ud[i] = (ap + bp)*dt/2.;
       }
-    
+/*    if (params.flux_bc) {
+        calc_coeffs(rmin[NR-1],rc[NR-1]-rc[NR-2],&am,&bm,aplanet,params.planet_torque);
+        calc_coeffs(rmin[1],rc[1]-rc[0],&ap,&bp,aplanet,params.planet_torque);
+        matrix.md[0] = (ap-bp)*dt/2.;
+        matrix.ud[0] = (ap+bp)*dt/2.;
+        matrix.md[NR-1] = (-am-bm)*dt/2.;
+        matrix.ld[NR-2] = (-am+bm)*dt/2.;
+
+    }
+*/
     matvec(matrix.ld,matrix.md,matrix.ud,lam,matrix.fm,NR);
 
 #pragma omp parallel for shared(i,y,dr,matrix)
@@ -316,14 +326,25 @@ void crank_nicholson_step(double dt, double aplanet, double *y) {
         matrix.ud[i] *= -1;
     }
 
+    if (params.flux_bc) {
+        matrix.fm[0] = -params.bc_mdot;
+        matrix.fm[NR-1] = params.bc_mdot;
+        matrix.md[0] = 0;
+        matrix.md[NR-1] = 0;
+        matrix.ld[NR-2] = 0;
+        matrix.ud[0] = 0;
+    }
+    else {
     matrix.md[0] = 1;
     matrix.md[NR-1] = 1;
     matrix.ld[NR-2] = 0;
     matrix.ud[0] = 0;
-    matrix.fm[0] = params.bc_lam[0];
-    matrix.fm[NR-1] = params.bc_lam[1];
 
 
+        matrix.fm[0] = params.bc_lam[0];
+        matrix.fm[NR-1] = params.bc_lam[1];
+
+    }
     trisolve(matrix.ld,matrix.md,matrix.ud,matrix.fm,y,NR);
 
 
@@ -393,15 +414,28 @@ void init_lam_from_file(void) {
 void init_lam(void) {
     int i;
 //    double plaw = log(params.bc_lam[0]/params.bc_lam[1])/log(rc[0]/rc[NR-1]);
-
-    double mdot0 = 1.5*params.nu0 * (params.bc_lam[1]*pow(params.ro,params.gamma - .5) - params.bc_lam[0]*pow(params.ri,params.gamma-.5))/(sqrt(params.ro)-sqrt(params.ri));
-    double sig0 = 2*mdot0/(3*params.nu0);
-    double x;
+#ifdef NU
     for(i=0;i<NR;i++) {
-        x = rc[i]/params.ri;
-        lam[i] = params.bc_lam[0]*pow(x,.5-params.gamma) + sig0*pow(rc[i],1-params.gamma)*(1-sqrt(1/x));
+        lam[i] = 2*rc[i]/(3*nu(rc[i]));
     }
+#else
+    double mdot0, sig0, x;
 
+    if (params.flux_bc) {
+        for(i=0;i<NR;i++) {
+            lam[i] = params.bc_mdot*2*rc[i]/(3*nu(rc[i]));
+        }
+    }
+    else {
+         mdot0 = 1.5*params.nu0 * (params.bc_lam[1]*pow(params.ro,params.gamma - .5) - params.bc_lam[0]*pow(params.ri,params.gamma-.5))/(sqrt(params.ro)-sqrt(params.ri));
+     sig0 = 2*mdot0/(3*params.nu0);
+
+     for(i=0;i<NR;i++) {
+         x = rc[i]/params.ri;
+         lam[i] = params.bc_lam[0]*pow(x,.5-params.gamma) + sig0*pow(rc[i],1-params.gamma)*(1-sqrt(1/x));
+     }
+    }
+#endif
 #ifdef INITIAL_NOISE
     double locs[7] = {.1,.6, 2, 5, 9, 20 , 30};
     int nlocs = 7; 
@@ -482,16 +516,20 @@ void free_matrix(void) {
     return;
 }
 double nu(double x) {
-//    return params.nu0 * pow(x,params.gamma);
+#ifdef NU
+    double res = params.nu0*sqrt(planet.a);
+#else
       double res = params.nu0 * pow(x,params.gamma);
 
       if (params.hs_visc) {
           double rh = pow(planet.mp*params.mth/3.,1./3) * planet.a;
           if (fabs(x-planet.a) <= 2*rh) {
-                res += planet.mp*params.mth *pow(planet.a,params.gamma)/(2*M_PI);
+            res += 3*pow(2*rh/planet.a,3) * sqrt(planet.a)/(2*M_PI);
           }
 
       }
+#endif
+
       return res;
 }
 double scaleH(double x) {
@@ -561,14 +599,19 @@ double dTr(double x,double a) {
 
         res = norm*( (planet.G1+1)*right_fac - left_fac);
     }
+   
     else {
         xi = (x-a) / scaleH(x);
 
 
         norm = planet.eps * a*M_PI*(planet.mp*params.mth)*(planet.mp*params.mth);
     
-        right_fac = norm*pow(x/fmax(scaleH(x),fabs(x-a)),4);
-    
+        if (planet.symmetric_torque) {
+            right_fac = norm*pow(a/fmax(scaleH(x),fabs(x-a)),4);
+        }
+        else {
+            right_fac = norm*pow(x/fmax(scaleH(x),fabs(x-a)),4);
+        }
         left_fac = -norm*pow(x/fmax(scaleH(x),fabs(x-a)),4);    
         
         left_fac *= (1-smoothing(xi, -planet.c, planet.delta));
@@ -904,7 +947,10 @@ void read_input_file(char *fname) {
 
     read_res=fscanf(f,"bc_lam_inner = %lg \n",&params.bc_lam[0]);
     read_res=fscanf(f,"bc_lam_outer = %lg \n",&params.bc_lam[1]);
-
+    read_res=fscanf(f,"bc_mdot = %lg \n",&params.bc_mdot);
+    read_res=fscanf(f,"flux_bc = %s \n",tmpstr);
+    set_bool(tmpstr,&params.flux_bc);
+    
     gchar=fgets(garbage,sizeof(garbage),f); //	Time Parameters:
     read_res=fscanf(f,"dt = %lg \n",&params.dt);
     read_res=fscanf(f,"nvisc = %lg \n",&params.nvisc);
@@ -924,6 +970,9 @@ void read_input_file(char *fname) {
     read_res=fscanf(f,"gaussian = %s \n",tmpstr);
     set_bool(tmpstr,&planet.gaussian);
     
+    read_res=fscanf(f,"symmetric_torque = %s \n",tmpstr);
+    set_bool(tmpstr,&planet.symmetric_torque);
+
     read_res=fscanf(f,"hs_visc = %s \n",tmpstr);
     set_bool(tmpstr,&params.hs_visc);
 
@@ -954,7 +1003,6 @@ void read_input_file(char *fname) {
 }
 
 void set_bool(char *buff, int *val) {
-    printf("Recieved string %s\n", buff);
     if ( (!strncmp(buff,"TRUE",MAXSTRLEN)) || (!strncmp(buff,"true",MAXSTRLEN)) || (!strncmp(buff,"True",MAXSTRLEN)) || (!strncmp(buff,"T",MAXSTRLEN)) || (!strncmp(buff,"T",MAXSTRLEN)) || (!strncmp(buff,"1",MAXSTRLEN))) {
         *val = TRUE;
             }
@@ -1061,7 +1109,9 @@ void write_hdf5_params(hid_t *params_id) {
     out_par.gamma= params.gamma;
     out_par.h = params.h;
     out_par.bc_lam_inner =  params.bc_lam[0];
-    out_par. bc_lam_outer = params.bc_lam[1];
+    out_par.bc_lam_outer = params.bc_lam[1];
+    out_par.bc_mdot = params.bc_mdot;
+    out_par.flux_bc = params.flux_bc;
     out_par.dt= params.dt;
     out_par.nvisc = params.nvisc;
     out_par.nt = params.nt;
@@ -1071,6 +1121,7 @@ void write_hdf5_params(hid_t *params_id) {
     out_par.move_planet = params.move_planet;
     out_par.move_planet_implicit = params.move_planet_implicit;
     out_par.gaussian = planet.gaussian;
+    out_par.symmetric_torque = planet.symmetric_torque;
     out_par.hs_visc = params.hs_visc;
     out_par.one_sided = planet.onesided;
     out_par.a = planet.a;
@@ -1098,6 +1149,9 @@ void write_hdf5_params(hid_t *params_id) {
 
    HDF5_INSERT_ERROR(H5Tinsert (memtype, "bc_lam_outer", HOFFSET (param_t, bc_lam_outer), H5T_NATIVE_DOUBLE));
 
+   HDF5_INSERT_ERROR(H5Tinsert (memtype, "bc_mdot", HOFFSET (param_t, bc_mdot), H5T_NATIVE_DOUBLE));
+ HDF5_INSERT_ERROR(H5Tinsert (memtype, "flux_bc", HOFFSET (param_t, flux_bc), H5T_NATIVE_INT));
+
    HDF5_INSERT_ERROR(H5Tinsert (memtype, "dt", HOFFSET (param_t, dt), H5T_NATIVE_DOUBLE));
 
    HDF5_INSERT_ERROR(H5Tinsert (memtype, "nvisc", HOFFSET (param_t, nvisc), H5T_NATIVE_DOUBLE));
@@ -1115,6 +1169,7 @@ void write_hdf5_params(hid_t *params_id) {
  HDF5_INSERT_ERROR(H5Tinsert (memtype, "move_planet_implicit", HOFFSET (param_t, move_planet_implicit), H5T_NATIVE_INT));
  HDF5_INSERT_ERROR(H5Tinsert (memtype, "gaussian", HOFFSET (param_t, gaussian), H5T_NATIVE_INT));
  
+ HDF5_INSERT_ERROR(H5Tinsert (memtype, "symmetric_torque", HOFFSET (param_t, symmetric_torque), H5T_NATIVE_INT));
  HDF5_INSERT_ERROR(H5Tinsert (memtype, "hs_visc", HOFFSET (param_t, hs_visc), H5T_NATIVE_INT));
 
     HDF5_INSERT_ERROR(H5Tinsert (memtype, "one_sided", HOFFSET (param_t, one_sided), H5T_NATIVE_DOUBLE));

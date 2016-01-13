@@ -25,6 +25,8 @@ typedef struct Parameters {
     int read_initial_conditions;
     int hs_visc;
     double bc_lam[2];
+    double bc_mdot;
+    int flux_bc;
     double release_time;
     char outputname[MAXSTRLEN];
 } Parameters;
@@ -39,6 +41,8 @@ typedef struct param_t {
     double h;
     double bc_lam_inner;
     double bc_lam_outer;
+    double bc_mdot;
+    int flux_bc;
     double dt;
     double nvisc;
     int nt;
@@ -48,6 +52,7 @@ typedef struct param_t {
     int move_planet;
     int move_planet_implicit;
     int gaussian;
+    int symmetric_torque;
     int hs_visc;
     double one_sided;
     double a;
@@ -65,6 +70,7 @@ typedef struct Planet {
     double c,eps;
     double onesided;
     int gaussian;
+    int symmetric_torque;
     double T0;
 } Planet;
 

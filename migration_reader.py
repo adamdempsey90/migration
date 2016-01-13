@@ -24,6 +24,7 @@ class Parameters():
         ('move_planet',bool),
         ('move_planet_implicit',bool),
         ('gaussian',bool),
+        ('symmetric_torque',bool),
         ('hs_visc',bool),
         ('one_sided',float),
         ('a',float),
@@ -192,6 +193,20 @@ class Sim(Parameters):
             linep, = ax.plot(self.at[0],self.torque[:,0][self.rc>=self.at[0]][0],'o',markersize=10)
             dat = self.torque[:,inds][:,::skip]
 
+        elif q == 'sigma':
+            fac = 2*np.pi*self.rc
+            ax.set_ylabel('$ \\Sigma(r)$',fontsize=20)
+            line, = ax.plot(self.rc,self.lam0/fac)
+            linep, = ax.plot(self.at[0],(self.lam0/fac)[self.rc>=self.at[0]][0],'o',markersize=10)
+            ax.plot(self.rc,self.lam_ss[:,-1]/fac,'--r')
+            ax.plot(self.rc,self.lam0/fac,'--k')
+            dat = self.lam[:,inds]
+            dat = dat[:,::skip]
+            for i in range(dat.shape[1]):
+                dat[:,i] /= fac
+
+            if logy:
+                ax.set_yscale('log')
         else:
             print  'q=%s is not a valid option' % q
             return

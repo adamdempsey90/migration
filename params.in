@@ -1,16 +1,18 @@
 #Grid Parameters:
 nr = 1024
-ri = 0.05
-ro = 15.6
+ri = 0.4
+ro = 3.0
 
 #Disk Parameters:
-alpha = 0.003
+alpha = 0.04
 gamma = 0.5
-h = .05
+h = .07
 
 #Boundary Conditions:
-bc_lam_inner = 0
-bc_lam_outer = 0.033
+bc_lam_inner = 2.51
+bc_lam_outer = 18.85
+bc_mdot = 0.00001
+flux_bc = T 
 
 #Time Parameters:
 dt = 100 
@@ -21,18 +23,19 @@ read_initial_conditions = F
 
 
 #Planet Properties:
-planet_torque = T
+planet_torque = F
 move_planet = F 
 move_planet_implicit = T
 gaussian = FALSE
-hs_visc = T
+symmetric_torque = F
+hs_visc = F
 one_sided = 0
-a  = 5.2
-mp = 1
+a  = 1.0
+mp = 1.0
 G1 = 0
 beta = 0.66666667
-delta = 0.6
+delta = 0.05
 c = 0.6666667
-eps = 0.1
+eps = 0.2
 outputname = results.hdf5
 
