@@ -6,6 +6,7 @@
 #include <hdf5.h>
 #include <string.h>
 
+#define ZEROTORQUE
 #define NR params.nr
 #define TRUE 1
 #define FALSE 0 

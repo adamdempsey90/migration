@@ -523,8 +523,8 @@ double nu(double x) {
 
       if (params.hs_visc) {
           double rh = pow(planet.mp*params.mth/3.,1./3) * planet.a;
-          if (fabs(x-planet.a) <= 2*rh) {
-            res += 3*pow(2*rh/planet.a,3) * sqrt(planet.a)/(2*M_PI);
+          if (fabs(x-planet.a) <= rh) {
+            res += 1.5*pow(rh/planet.a,3) * sqrt(planet.a)/(2*M_PI);
           }
 
       }
@@ -1228,7 +1228,6 @@ void steadystate_config(SteadyStateField *tmpfld, double a) {
     double res;
 
     tmpfld->a = a;
-
 
 
 
