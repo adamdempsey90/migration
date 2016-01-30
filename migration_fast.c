@@ -650,7 +650,7 @@ double calc_drift_speed(double a, double *y) {
 void move_planet(double dt, double *y, double *vs, double *a) {
     
     *vs = calc_drift_speed(*a,y);
-    planet.a += dt*planet.vs;
+    planet.a += dt*(*vs);
     *a += dt*(*vs);
 
     return;
@@ -1261,6 +1261,7 @@ void steadystate_config(SteadyStateField *tmpfld, double a) {
 
     tmpfld->vs = -1.5*params.alpha*params.h*params.h*2*sqrt(a)*(params.bc_lam[1]-params.bc_lam[0]) *(1 - (tmpfld->mdot)/(tmpfld->mdot0));
 
+    tmpfld->vs /= (planet.mp*params.mth);
 #pragma omp parallel for private(i)
     for(i=0;i<NR;i++) {
         
