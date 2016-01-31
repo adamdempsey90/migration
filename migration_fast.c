@@ -39,7 +39,7 @@ int main(int argc, char *argv[]) {
     double total_mass = 0;
     for(i=0;i<NR;i++) total_mass += dr[i]*lam[i];
 
-    double t_end = params.nvisc * params.tvisc;
+//    double t_end = params.nvisc * params.tvisc;
     double dt = params.dt;
     int nt = params.nt;
     fld.avals[0] = planet.a; fld.vs[0] = planet.vs;
@@ -199,7 +199,7 @@ void advance_system(double dt, double *t, double tend) {
     }
     else {
         crank_nicholson_step(dt,planet.a,lam);
-
+        planet.vs = calc_drift_speed(planet.a,lam);
     }
     *t += dt;
 
@@ -306,26 +306,29 @@ void crank_nicholson_step(double dt, double aplanet, double *y) {
         matrix.ld[i-1] = (-am + bm)*dt/2.;
         matrix.ud[i] = (ap + bp)*dt/2.;
       }
-/*    if (params.flux_bc) {
+    if (params.flux_bc) {
         calc_coeffs(rmin[NR-1],rc[NR-1]-rc[NR-2],&am,&bm,aplanet,params.planet_torque);
         calc_coeffs(rmin[1],rc[1]-rc[0],&ap,&bp,aplanet,params.planet_torque);
         matrix.md[0] = (ap-bp)*dt/2.;
         matrix.ud[0] = (ap+bp)*dt/2.;
         matrix.md[NR-1] = (-am-bm)*dt/2.;
         matrix.ld[NR-2] = (-am+bm)*dt/2.;
-
+        matrix.fm[0] = -params.bc_mdot*dt;
+        matrix.fm[NR-1] = params.bc_mdot*dt;
     }
-*/
-    matvec(matrix.ld,matrix.md,matrix.ud,lam,matrix.fm,NR);
 
-#pragma omp parallel for shared(i,y,dr,matrix)
+    matvec(matrix.ld,matrix.md,matrix.ud,y,matrix.fm,NR);
+
+#pragma omp parallel for private(i) shared(y,dr,matrix)
     for(i=0;i<NR;i++) {
         matrix.fm[i] += dr[i]*y[i];
         matrix.md[i] = dr[i] - matrix.md[i];
-        matrix.ld[i] *= -1;
-        matrix.ud[i] *= -1;
+        if (i<NR-1) {
+            matrix.ld[i] *= -1;
+            matrix.ud[i] *= -1;
+        }
     }
-
+/*
     if (params.flux_bc) {
         matrix.fm[0] = -params.bc_mdot;
         matrix.fm[NR-1] = params.bc_mdot;
@@ -335,15 +338,23 @@ void crank_nicholson_step(double dt, double aplanet, double *y) {
         matrix.ud[0] = 0;
     }
     else {
-    matrix.md[0] = 1;
-    matrix.md[NR-1] = 1;
-    matrix.ld[NR-2] = 0;
-    matrix.ud[0] = 0;
-
-
-        matrix.fm[0] = params.bc_lam[0];
+*/
+    if (!params.flux_bc) {
+        matrix.md[NR-1] = 1;
+        matrix.ld[NR-2] = 0;
         matrix.fm[NR-1] = params.bc_lam[1];
 
+        matrix.md[0] = 1;
+        matrix.ud[0] = 0;
+        matrix.fm[0] = params.bc_lam[0];
+    }
+    else {
+
+        if (params.bc_lam[0] == 0) {
+            matrix.md[0] = 1;
+            matrix.ud[0] = 0;
+            matrix.fm[0] = params.bc_lam[0];
+        }
     }
     trisolve(matrix.ld,matrix.md,matrix.ud,matrix.fm,y,NR);
 
@@ -585,7 +596,7 @@ void set_params(char *parfile) {
 }
 
 double dTr(double x,double a) {
-    double left_fac, right_fac, smooth_fac; 
+    double left_fac, right_fac; 
     double norm, xi,res;
 
     if (planet.gaussian == TRUE) {
@@ -693,7 +704,7 @@ int locate(double *xx, int nx, double x) {
  * such that x lies between xx[j] and xx[j+1].
  * Return *j=-1 or *j=nx if x lies outside the range of xx. 
 */
-    int j;
+    
     int ju, jm, jl;
     int ascnd;
 
@@ -757,7 +768,7 @@ void move_planet_implicit(double dt, double *y, double *vs, double *a) {
     double tol = 1e-4;
     double a_old = *a;
     double args[2] = {dt,a_old};
-    double a_new;
+    
     double *lam_old;
      MALLOC_SAFE(( lam_old =(double *)malloc(sizeof(double)*NR)));
     memcpy(&lam_old[0],&y[0],sizeof(double)*NR);
@@ -1243,25 +1254,46 @@ void steadystate_config(SteadyStateField *tmpfld, double a) {
     }
 
 
-    tmpfld->kvals[i] = 0;
+    tmpfld->kvals[0] = 0;
     for(i=1;i<NR;i++) {
         res = dr[i]*tmpfld->ivals[i]/(3*nu(rc[i]));
         tmpfld->kvals[i] = tmpfld->kvals[i-1] + res;
     }
 
-    tmpfld->mdot = (params.bc_lam[1]*tmpfld->ivals[NR-1] - params.bc_lam[0])/tmpfld->kvals[NR-1];
-    
-#pragma omp parallel for private(i)
-    for(i=0;i<NR;i++) {
-        tmpfld->lam[i] = (params.bc_lam[0] + tmpfld->mdot * tmpfld->kvals[i])/tmpfld->ivals[i];
+    if (params.flux_bc) {
+        tmpfld->mdot = params.bc_mdot;
+    }
+    else {
+        tmpfld->mdot = (params.bc_lam[1]*tmpfld->ivals[NR-1] - params.bc_lam[0])/tmpfld->kvals[NR-1];
+    }
 
+    if (params.flux_bc) {
+        
+#pragma omp parallel for private(i)
+        for(i=0;i<NR;i++) {
+         tmpfld->lam[i] =  (tmpfld->mdot * tmpfld->kvals[i])/tmpfld->ivals[i];
+
+         }
+    }
+    else {
+#pragma omp parallel for private(i)
+        for(i=0;i<NR;i++) {
+         tmpfld->lam[i] = (params.bc_lam[0] + tmpfld->mdot * tmpfld->kvals[i])/tmpfld->ivals[i];
+
+         }
     }
     tmpfld->mdot0 = 1.5*params.alpha*params.h*params.h;
     tmpfld->mdot0  *= (params.bc_lam[1]*pow(params.ro,params.gamma-.5)-params.bc_lam[0]*pow(params.ri,params.gamma-.5))/(sqrt(params.ro)-sqrt(params.ri));
 
+    tmpfld->vs = (tmpfld->lam[NR-1])*nu(params.ro)*1.5/sqrt(params.ro)
+                     -(tmpfld->mdot)*(sqrt(params.ro)-sqrt(params.ri));
+    tmpfld->vs *=  -2*sqrt(planet.a)/(planet.mp*params.mth);
+
+    /*
     tmpfld->vs = -1.5*params.alpha*params.h*params.h*2*sqrt(a)*(params.bc_lam[1]-params.bc_lam[0]) *(1 - (tmpfld->mdot)/(tmpfld->mdot0));
 
     tmpfld->vs /= (planet.mp*params.mth);
+    */
 #pragma omp parallel for private(i)
     for(i=0;i<NR;i++) {
         

@@ -15,6 +15,8 @@ class Parameters():
         ('h',float),
         ('bc_lam_inner',float),
         ('bc_lam_outer',float),
+        ('bc_mdot',float),
+        ('flux_bc',bool),
         ('dt',float),
         ('nvisc',float),
         ('nt',int),
@@ -71,7 +73,7 @@ class Parameters():
     def run(self,fname='params_py.in',**kargs):
 
         self.dump_params(fname,**kargs)
-        call(['./a.out',fname])
+        call(['./migra',fname])
         try:
             return kargs['outputname']
         except KeyError:
@@ -133,8 +135,11 @@ class Sim(Parameters):
         self.lami = self.bc_lam_inner
         self.lamo = self.bc_lam_outer
         self.K = self.mp * self.h/self.alpha
-        self.B = 2*self.at*(self.lamo-self.lami)/(self.mp*self.mth)
-        self.Bfac = (np.sqrt(self.ro)-np.sqrt(self.ri))/(np.sqrt(self.at)-np.sqrt(self.ri))
+#        self.B = 2*self.at*(self.lamo-self.lami)/(self.mp*self.mth)
+#        self.Bfac = (np.sqrt(self.ro)-np.sqrt(self.ri))/(np.sqrt(self.at)-np.sqrt(self.ri))
+        self.K = (self.mp*self.mth)**2/(self.alpha*self.h**5)
+        self.B = (4./3) * self.mdot_ss * self.at*(1-np.sqrt(self.ri/self.at))/(self.nu(self.at)*self.mp*self.mth)
+        self.Bfac = 1
         self.freduc  = self.B * self.Bfac * (1 - self.eff)
 #        self.dTr = dat[3,1:]
 #        self.lami = dat[4,0]
@@ -151,15 +156,29 @@ class Sim(Parameters):
             self.vr_ss[:,i] = -self.mdot_ss[i]/self.lam_ss[:,i]
         self.beta_reduc = self.vr_ss/self.vr0
 
+        self.set_ss()
 #        self.vr0 = -self.mdot0/self.lam0
 #        self.lamp = np.zeros(self.lam.shape)
 #        for i in range(self.lam.shape[1]):
 #            self.lamp[:,i] = (self.lam[:,i]-self.lam0)/self.lam0
+    def set_ss(self):
+        if self.flux_bc:
+            mdot = self.bc_mdot
 
+            for i in range(self.lam_ss.shape[1]):
+                self.vr0[:,i] = self.vr_nu(self.rc)/(1-np.sqrt(self.ri/self.rc))
+                #self.lam_ss[:,i] /= self.eff[i]
+
+            self.lam0 = -mdot/self.vr_nu(self.rc)
+        else:
+            for i in range(self.lam_ss.shape[1]):
+                self.vr0[:,i] = self.vr_nu(self.rc)/(1-np.sqrt(self.ri/self.rc))
+                self.lam_ss[:,i]  /= self.eff[i]
+            self.lam0 = -mdot/self.vr_nu(self.rc)
     def nu(self,x):
         return self.alpha*self.h*self.h * pow(x,self.gamma)
     def vr_nu(self,x):
-        return -1.5 * self.nu(x)/x
+        return -1.5 * self.nu(x)/x /(1 - np.sqrt(self.ri/x))
 
     def animate(self,tend,skip,tstart=0,q='lam',logx = True,logy=True):
         fig=plt.figure()

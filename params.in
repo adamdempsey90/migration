@@ -1,6 +1,6 @@
 #Grid Parameters:
-nr = 1024
-ri = 0.05
+nr = 256
+ri = 1.0
 ro = 30.0
 
 #Disk Parameters:
@@ -10,7 +10,7 @@ h = 0.1
 
 #Boundary Conditions:
 bc_lam_inner = 0.0
-bc_lam_outer = 0.0001
+bc_lam_outer = 1.0
 bc_mdot = 0.00001
 flux_bc = F 
 

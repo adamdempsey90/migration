@@ -6,6 +6,11 @@
 #include <hdf5.h>
 #include <string.h>
 
+#ifndef M_PI
+#define M_PI           3.14159265358979323846
+#endif
+
+
 #define ZEROTORQUE
 #define NR params.nr
 #define TRUE 1

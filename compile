@@ -1,12 +1,36 @@
 #!/bin/bash
-if [ $(uname) == Linux ] 
+
+CFLAGS="-O3 -Wall -Wextra  -fopenmp -g" 
+LDFLAGS="-lm -lgomp -lhdf5"
+EXECNAME="migra"
+FILES="migration_fast.c"
+
+
+LIBFLAGS=
+INCFLAGS=
+CC="gcc"
+if [ "$(uname)" != "Linux" ]
 then
-    gcc -O3 -Wall -fopenmp -g -D${1:-ALPHAVISCOSITY} migration_fast.c -lm -lgomp -lhdf5
-else
     if [ $USER == zeus ]
     then
-        INCFLAGS=-I/usr/local/include
         LIBFLAGS=-L/usr/local/lib
+        INCFLAGS=-I/usr/local/include
+        CC="gcc-4.9"
     fi
-    gcc-4.9 -O3 -Wall -fopenmp -g $INCFLAGS -D${1:-ALPHAVISCOSITY}  migration_fast.c $LIBFLAGS -lgomp -lhdf5
 fi
+
+$CC $CFLAGS $INCFLAGS $FILES $LDFLAGS $LIBFLAGS -o $EXECNAME
+
+#if [ $(uname) == Linux ] 
+#then
+#    
+#
+###    gcc -O3 -Wall -Wextra -std=c99 -fopenmp -g -D${1:-ALPHAVISCOSITY} -lm -lgomp -lhdf5 -o migra migration_fast.c
+#else
+#    if [ $USER == zeus ]
+#    then
+#        INCFLAGS=-I/usr/local/include
+#        LIBFLAGS=-L/usr/local/lib
+#    fi
+#    gcc-4.9 -O3 -Wall -fopenmp -g $INCFLAGS -D${1:-ALPHAVISCOSITY}  migration_fast.c $LIBFLAGS -lgomp -lhdf5
+#fi
