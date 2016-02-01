@@ -100,6 +100,7 @@ class Sim(Parameters):
 
         self.rc = mesh['rc'][:]
         self.dr = mesh['dr'][:]
+        self.dlr = self.dr/self.rc
         self.rmin=mesh['rmin'][:]
         self.lam0 = mesh['lami'][:]
         self.mdot0 = mesh['mdoti'][:]
@@ -134,10 +135,10 @@ class Sim(Parameters):
         self.tvisc = self.ro**2/(self.nu(self.ro))
         self.lami = self.bc_lam_inner
         self.lamo = self.bc_lam_outer
-        self.K = self.mp * self.h/self.alpha
+#        self.K = self.mp * self.h/self.alpha
 #        self.B = 2*self.at*(self.lamo-self.lami)/(self.mp*self.mth)
 #        self.Bfac = (np.sqrt(self.ro)-np.sqrt(self.ri))/(np.sqrt(self.at)-np.sqrt(self.ri))
-        self.K = (self.mp*self.mth)**2/(self.alpha*self.h**5)
+        self.K = self.eps*(self.mp*self.mth)**2/(self.alpha*self.h**5)
         self.B = (4./3) * self.mdot_ss * self.at*(1-np.sqrt(self.ri/self.at))/(self.nu(self.at)*self.mp*self.mth)
         self.Bfac = 1
         self.freduc  = self.B * self.Bfac * (1 - self.eff)
