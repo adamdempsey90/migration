@@ -50,6 +50,8 @@ int main(int argc, char *argv[]) {
     }
     
     steadystate_config(&fld_ss,planet.a);
+//    steadystate_config_nl(&fld_ss,planet.a);
+
     fld.vs_ss[0] = fld_ss.vs;
     fld.mdot_ss[0] = fld_ss.mdot;
     fld.efficiency[0] = fld_ss.mdot/fld_ss.mdot0;
@@ -65,7 +67,12 @@ int main(int argc, char *argv[]) {
 
 #pragma omp parallel for private(i)
     for(i=0;i<NR;i++) {
-        fld.torque[i] = dTr(rc[i],planet.a);
+        if (params.nonlocal_torque) {
+            fld.torque[i] = dTr_nl(rc[i],i,planet.a,TRUE);
+        }
+        else {
+            fld.torque[i] = dTr(rc[i],planet.a);
+        }
     }
 
     for(i=0;i<nt;i++) {
@@ -97,7 +104,12 @@ int main(int argc, char *argv[]) {
         for(j=0;j<NR;j++) {
             fld.sol[j + NR*i] = lam[j];
             fld.sol_mdot[j + NR*i] = mdot[j];
-            fld.torque[j + NR*i] = dTr(rc[j],planet.a);
+            if (params.nonlocal_torque) {
+                fld.torque[j + NR*i] = dTr_nl(rc[j],j,planet.a,TRUE);
+            }
+            else {
+                fld.torque[j + NR*i] = dTr(rc[j],planet.a);
+            }
             fld.sol_ss[j + NR*i] = fld_ss.lam[j];
             fld.lamp[j+NR*i] = fld_ss.lamp[j];
         }
@@ -193,12 +205,22 @@ void advance_system(double dt, double *t, double tend) {
             multi_step(dt,lam,&planet.vs,&planet.a);
         }
         else {
-            crank_nicholson_step(dt,planet.a, lam);
+            if (params.nonlocal_torque) {
+                crank_nicholson_step_nl(dt,planet.a,lam);
+             }
+            else {
+                crank_nicholson_step(dt,planet.a,lam);
+              }
             move_planet(dt, lam, &planet.vs, &planet.a); 
         }
     }
     else {
-        crank_nicholson_step(dt,planet.a,lam);
+        if (params.nonlocal_torque) {
+            crank_nicholson_step_nl(dt,planet.a,lam);
+         }
+        else {
+            crank_nicholson_step(dt,planet.a,lam);
+          }
         planet.vs = calc_drift_speed(planet.a,lam);
     }
     *t += dt;
@@ -277,6 +299,99 @@ void calc_coeffs(double x, double dx,double *a, double *b,double rp,int planet_t
     *a /= 2;
     return;
 }
+
+double dTr_nl(double x, int i, double rp, int centered) {
+    double tsh = 1.89 + .53/planet.mp;
+    double f0 = params.eps; //.45;
+    double T0 = (planet.mp*params.mth)*(planet.mp*params.mth)/params.mth;
+    double norm = sqrt(tsh) * f0 * T0 * .5/M_PI;
+    norm /= rp;
+    
+    double tauval;
+    if (centered) {
+        tauval = tauc[i];
+    }
+    else {
+        tauval= taumin[i];
+    }
+
+
+    if (tauval <= tsh) {
+        return 0;
+    }
+    if (x < rp) {
+        return -norm*tau_integrand(x/rp)*pow(tauval,-1.5);//sqrt(x);
+    }
+    else {
+        return norm*tau_integrand(x/rp)*pow(tauval,-1.5);//sqrt(x);
+    } 
+        
+}
+
+
+double calc_coeffs_nl(double xm,double rp,int i) {
+
+/*
+    double tsh = 1.89 + .53/planet.mp;
+    double f0 = .45;
+    double T0 = (planet.mp*params.mth)*(planet.mp*params.mth)*pow(params.h,-3.);
+    double norm = -sqrt(tsh) * f0 * T0 * .5/M_PI;
+    if (taumin[i] <= tsh) {
+        return 0;
+    }
+    if (xm < rp) {
+        return -norm*tau_integrand(xm/rp)*pow(taumin[i],-1.5); ///sqrt(xm);
+    }
+    else {
+        return norm*tau_integrand(xm/rp)*pow(taumin[i],-1.5); ///sqrt(xm);
+    } 
+*/
+    return -dTr_nl(xm,i,rp,FALSE)*sqrt(xm)*2;
+
+}
+
+double tau_integrand(double x) {
+    double norm = 2 * pow(params.h,-2.5)*pow(2.,-1.25);
+    double p1 = params.gamma;
+    double p2 = -.5*(params.gamma - 1.5);
+    
+    return norm* pow(x,(5*p2+p1)*.5 - 11./4)*pow(fabs(pow(x,1.5)-1),1.5);
+}
+
+void set_tau(double a) {
+    /* Set the value of tau
+     * This assumes that matrix.icol has already been set to the 
+     * correct index!
+     */
+    int i;
+    int icol = matrix.icol;
+
+    /* taumin[icol] is tau at the inner zone edge that holds the planet */
+    taumin[icol] = 0;
+    tauc[icol] = 0;
+    /* Outer disk */
+    taumin[icol+1] = .5*dlr*tau_integrand(rmin[icol+1]/a)*rmin[icol+1]/a;
+    tauc[icol+1] = .5*dlr*tau_integrand(rc[icol+1]/a)*rc[icol+1]/a;
+    for(i=icol+2;i<NR-1;i++) {
+        taumin[i] = taumin[i-1] + dlr*tau_integrand(rmin[i]/a)*rmin[i]/a;
+        tauc[i] = tauc[i-1] + dlr*tau_integrand(rc[i]/a)*rc[i]/a;
+
+    }
+    taumin[NR-1] = taumin[NR-2] + .5*dlr*tau_integrand(rmin[NR-1]/a)*rmin[NR-1]/a;
+    tauc[NR-1] = tauc[NR-2] + .5*dlr*tau_integrand(rc[NR-1]/a)*rc[NR-1]/a;
+    /* Inner Disk */
+    taumin[icol-1] = .5*dlr*tau_integrand(rmin[icol-1]/a)*rmin[icol-1]/a;
+    tauc[icol-1] = .5*dlr*tau_integrand(rc[icol-1]/a)*rc[icol-1]/a;
+    for(i=icol-2;i>0;i--) {
+        taumin[i] = taumin[i+1] + .5*dlr*tau_integrand(rmin[i]/a)*rmin[i]/a;
+        tauc[i] = tauc[i+1] + .5*dlr*tau_integrand(rc[i]/a)*rc[i]/a;
+    }
+    taumin[0] = taumin[1] + .5*dlr*tau_integrand(rmin[1]/a)*rmin[1]/a;
+    tauc[0] = tauc[1] + .5*dlr*tau_integrand(rc[1]/a)*rc[1]/a;
+    return;
+}
+
+
 
 
 void crank_nicholson_step(double dt, double aplanet, double *y) {
@@ -362,6 +477,188 @@ void crank_nicholson_step(double dt, double aplanet, double *y) {
     return;
 }
 
+
+void crank_nicholson_step_nl(double dt, double aplanet, double *y) {
+    int i;
+    int need_set_flag = TRUE;
+    double ap,am, bm,bp, rm, rp;
+    
+    for(i=0;i<NR-1;i++) {
+        matrix.fm[i] = 0;
+        matrix.md[i] = 0;
+        matrix.ud[i] = 0;
+        matrix.ld[i] = 0;
+        matrix.col[i] = 0;
+        if (rmin[i] >= aplanet) {
+            if (need_set_flag) { 
+                matrix.icol = i;
+                need_set_flag = FALSE;
+            }
+        }
+    }
+
+
+    if (need_set_flag) {
+        printf("Couldnt find planet in domain, a=%lg\n Setting planet to last grid point at r=%lg\n",aplanet,rc[NR-1]);
+        matrix.icol = NR-1;
+    }
+    matrix.md[NR-1] = 0;
+    matrix.fm[NR-1] = 0;
+
+    set_tau(aplanet);
+
+
+#pragma omp parallel for private(i,rm,rp,am,ap,bm,bp) shared(matrix,rc,rmin)
+    for(i=1;i<NR-1;i++) {
+        rm = rmin[i];
+        rp = rmin[i+1];
+
+        calc_coeffs(rm,rc[i]-rc[i-1],&am,&bm,aplanet,FALSE);
+        calc_coeffs(rp,rc[i+1]-rc[i],&ap,&bp,aplanet,FALSE);
+
+        matrix.md[i] = (ap-am - bm - bp)*dt/2.;
+        matrix.ld[i-1] = (-am + bm)*dt/2.;
+        matrix.ud[i] = (ap + bp)*dt/2.;
+
+        if (params.planet_torque) {
+            am  = calc_coeffs_nl(rm,aplanet,i);
+            ap = calc_coeffs_nl(rp,aplanet,i+1);
+            matrix.col[i] = (ap-am)*dt/2.;
+        }
+
+      }
+    if (params.flux_bc) {
+        calc_coeffs(rmin[NR-1],rc[NR-1]-rc[NR-2],&am,&bm,aplanet,FALSE);
+        calc_coeffs(rmin[1],rc[1]-rc[0],&ap,&bp,aplanet,FALSE);
+        matrix.md[0] = (ap-bp)*dt/2.;
+        matrix.ud[0] = (ap+bp)*dt/2.;
+        matrix.md[NR-1] = (-am-bm)*dt/2.;
+        matrix.ld[NR-2] = (-am+bm)*dt/2.;
+        matrix.fm[0] = -params.bc_mdot*dt;
+        matrix.fm[NR-1] = params.bc_mdot*dt;
+
+        if (params.planet_torque) {
+            am=calc_coeffs_nl(rmin[NR-1],aplanet,NR-1);
+            ap=calc_coeffs_nl(rmin[1],aplanet,1);
+            matrix.col[0] = ap*dt/2.;
+            matrix.col[NR-1] = -am*dt/2.;
+        }
+    }
+
+    matvec(matrix.ld,matrix.md,matrix.ud,y,matrix.fm,NR);
+
+#pragma omp parallel for private(i) shared(y,dr,matrix)
+    for(i=0;i<NR;i++) {
+        matrix.fm[i] += dr[i]*y[i] + matrix.col[i]*y[matrix.icol] ;
+        matrix.md[i] = dr[i] - matrix.md[i];
+        matrix.col[i] *= -1;
+        if (i<NR-1) {
+            matrix.ld[i] *= -1;
+            matrix.ud[i] *= -1;
+        }
+    }
+/*
+    if (params.flux_bc) {
+        matrix.fm[0] = -params.bc_mdot;
+        matrix.fm[NR-1] = params.bc_mdot;
+        matrix.md[0] = 0;
+        matrix.md[NR-1] = 0;
+        matrix.ld[NR-2] = 0;
+        matrix.ud[0] = 0;
+    }
+    else {
+*/
+    if (!params.flux_bc) {
+        matrix.md[NR-1] = 1;
+        matrix.ld[NR-2] = 0;
+        matrix.col[NR-1] = 0;
+        matrix.fm[NR-1] = params.bc_lam[1];
+
+        matrix.md[0] = 1;
+        matrix.ud[0] = 0;
+        matrix.col[0] = 0;
+        matrix.fm[0] = params.bc_lam[0];
+    }
+    else {
+
+        if (params.bc_lam[0] == 0) {
+            matrix.md[0] = 1;
+            matrix.ud[0] = 0;
+            matrix.col[0] = 0;
+            matrix.fm[0] = params.bc_lam[0];
+        }
+    }
+
+    trisolve_sm(matrix.ld,matrix.md,matrix.ud,matrix.fm,y,matrix.col,matrix.icol,NR);
+
+
+    return;
+}
+
+
+void trisolve_sm(double *ld, double *md, double *ud, double *d,double *sol,double *col, int icol, int n) {
+    /* Thomas algorithm using Shermin-Morrison formula for an extra column, col, at index icol
+     */
+
+    int i;
+    double *cp, *bp, *dp;
+    double *cp2, *bp2, *dp2;
+    double *sol2;
+     cp =  (double *)malloc(sizeof(double)*(n-1));
+    bp =  (double *)malloc(sizeof(double)*n);
+    dp =  (double *)malloc(sizeof(double)*n);
+
+    cp2 =  (double *)malloc(sizeof(double)*(n-1));
+    bp2 =  (double *)malloc(sizeof(double)*n);
+    dp2 =  (double *)malloc(sizeof(double)*n);
+     sol2 =  (double *)malloc(sizeof(double)*n);
+  
+     
+    for(i=0;i<n-1;i++) {
+        cp[i] = 0;
+        bp[i] = 1;
+        dp[i] = 0;
+        cp2[i] = 0;
+        bp2[i] = 1;
+        dp2[i] = 0;
+    }
+    bp[n-1] = 0;
+    dp[n-1] = 0;
+
+    cp[0] = ud[0]/md[0];
+
+    bp2[n-1] = 0;
+    dp2[n-1] = 0;
+
+    cp2[0] = ud[0]/md[0];
+    for(i=1;i<n-1;i++) {
+        cp[i] = ud[i]/(md[i]- ld[i-1]*cp[i-1]);
+        cp2[i] = ud[i]/(md[i]- ld[i-1]*cp2[i-1]);
+    }
+    dp[0] = d[0]/md[0];
+    dp2[0] = col[0]/md[0];
+    for(i=1;i<n;i++) {
+        dp[i] = (d[i] - ld[i-1]*dp[i-1])/(md[i]-ld[i-1]*cp[i-1]);
+        dp2[i] = (col[i] - ld[i-1]*dp2[i-1])/(md[i]-ld[i-1]*cp2[i-1]);
+    }
+
+    sol[n-1] = dp[n-1];
+    sol2[n-1] = dp2[n-1];
+    for(i=n-2;i>=0;i--) {
+        sol[i] = dp[i] - cp[i]*sol[i+1];
+        sol2[i] = dp2[i] - cp2[i]*sol2[i+1];
+    }
+
+    double fac = sol[icol]/(1+sol2[icol]);
+    for(i=0;i<n;i++) {
+        sol[i]  -= fac*sol2[i];
+    }
+
+    free(cp); free(bp); free(dp);
+    free(cp2); free(bp2); free(dp2);
+    free(sol2);
+    return;
+}
 void trisolve(double *ld, double *md, double *ud, double *d,double *sol,int n) {
     int i;
     double *cp, *bp, *dp;
@@ -465,11 +762,13 @@ void init_lam(void) {
 void set_matrix(void) {
     int i;
     matrix.size = NR;
+    matrix.icol = 0;
     MALLOC_SAFE(( matrix.ld = (double *)malloc(sizeof(double)*(NR-1))));
     MALLOC_SAFE(( matrix.md = (double *)malloc(sizeof(double)*NR)));
     MALLOC_SAFE(( matrix.ud =  (double *)malloc(sizeof(double)*(NR-1))));
-    MALLOC_SAFE(( matrix.fm =  (double *)malloc(sizeof(double)*NR))); 
- 
+    MALLOC_SAFE(( matrix.fm =  (double *)malloc(sizeof(double)*NR)));  
+    MALLOC_SAFE(( matrix.col =  (double *)malloc(sizeof(double)*NR))); 
+
     printf("Initializing matrices...\n"); 
     for(i=0;i<NR-1;i++) {
         matrix.ld[i] = 0;
@@ -493,8 +792,10 @@ void set_grid(void) {
     MALLOC_SAFE((lrc = (double *)malloc(sizeof(double)*NR)));
     MALLOC_SAFE((lrmin = (double *)malloc(sizeof(double)*NR)));
 
+    MALLOC_SAFE(( taumin =  (double *)malloc(sizeof(double)*NR)));
+    MALLOC_SAFE(( tauc =  (double *)malloc(sizeof(double)*NR)));
 
-
+    int set_flag = TRUE;
     int i;
 
     for (i=0;i<NR;i++) {
@@ -502,6 +803,8 @@ void set_grid(void) {
         rc[i] = exp(lrc[i]);
         dr[i] = rc[i]*dlr;
         lam[i] = 0;
+        taumin[i] = 0;
+        tauc[i] = 0;
     }
     lrmin[0] = (log(params.ri) - dlr + lrc[0])*.5;
     rmin[0] = exp(lrmin[0]);//.5*(rc[0] + exp(log(params.ri)-dlr));
@@ -509,7 +812,9 @@ void set_grid(void) {
         lrmin[i] = .5*(lrc[i]+lrc[i-1]);
         rmin[i] = exp(lrmin[i]);
     }
+   
     
+
     set_mdot(params.planet_torque);
     return;
 
@@ -518,12 +823,14 @@ void set_grid(void) {
 void free_grid(void) {
     free(rc); free(rmin); free(lam); free(dr);
     free(lrc); free(lrmin);
-    free(mdot);
+    free(mdot); free(taumin);
+    free(tauc);
      return;
 }
 
 void free_matrix(void) {
     free(matrix.md); free(matrix.ld); free(matrix.ud); free(matrix.fm);
+    free(matrix.col);
     return;
 }
 double nu(double x) {
@@ -648,10 +955,20 @@ double calc_drift_speed(double a, double *y) {
 
 #pragma omp parallel for private(i) reduction(+:res) 
     for(i=1;i<NR-1;i++) {
-        res += dTr(rc[i],a)*y[i]/2;  // Factor of 1/2 from torque normalization
-    }
+        if (params.nonlocal_torque) {
+            res += dTr_nl(rc[i],i,a,TRUE)*y[i]/2;  // Factor of 1/2 from torque normalization
 
-    res += .5*(dTr(rc[0],a)*y[0] + dTr(rc[NR-1],a)*y[NR-1])/2;
+        }
+        else {
+            res += dTr(rc[i],a)*y[i]/2;  // Factor of 1/2 from torque normalization
+        }
+    }
+    if (params.nonlocal_torque) {
+        res += .5*(dTr_nl(rc[0],0,a,TRUE)*y[0] + dTr_nl(rc[NR-1],NR-1,a,TRUE)*y[NR-1])/2;
+    }
+    else {
+        res += .5*(dTr(rc[0],a)*y[0] + dTr(rc[NR-1],a)*y[NR-1])/2;
+    }
     res *= -2*dlr*sqrt(a)/(planet.mp*params.mth);
 
     return res;
@@ -676,8 +993,12 @@ void set_mdot(int planet_torque) {
         cb = ca*(params.gamma - .5);
 
         if (planet_torque == TRUE) {
-            cb -= dTr(rc[i],planet.a)/(sqrt(rc[i]));
-            
+            if (params.nonlocal_torque) {
+                cb -= 2*sqrt(rc[i])*dTr_nl(rc[i],i,planet.a,TRUE);
+            }
+            else {
+                cb -= dTr(rc[i],planet.a)/(sqrt(rc[i]));
+            }
         }  
         mdot[i] = cb*lam[i]; 
         if (i == 0){ 
@@ -825,7 +1146,12 @@ double secant_method(double (*function)(double,double *,double[]),double x1, dou
 double planet_zero_function_euler(double a, double *y,double args[]) {
     double  dt = args[0];
     double a_old = args[1];
-    crank_nicholson_step(dt,a,y);
+    if (params.nonlocal_torque) {
+        crank_nicholson_step_nl(dt,a,y);
+    }
+    else {
+        crank_nicholson_step(dt,a,y);
+    }
     double vs = calc_drift_speed(a,y);
 
     return a - a_old - dt*vs;
@@ -860,7 +1186,12 @@ void predict_step(double dt, double *y,double *vs, double *a) {
 }
 
 void correct_step(double dt, double *y, double *vs, double *a) {
-    crank_nicholson_step(dt,*a,y);
+    if (params.nonlocal_torque) {
+        crank_nicholson_step_nl(dt,*a,y);
+    }
+    else {
+        crank_nicholson_step(dt,*a,y);
+    }
     double vs1 = calc_drift_speed(*a,y);
     *a += .5*dt*(vs1 - (*vs));
     *vs = vs1;
@@ -871,7 +1202,12 @@ void multi_step(double dt, double *y, double *vs, double *a) {
     double vs1 = calc_drift_speed(*a,y);
     *a += .5*dt*vs1;
 
-    crank_nicholson_step(dt,*a,y);
+    if (params.nonlocal_torque) {
+        crank_nicholson_step_nl(dt,*a,y);
+    }
+    else {
+        crank_nicholson_step(dt,*a,y);
+    }
 
     *vs = calc_drift_speed(*a,y);
 
@@ -990,6 +1326,8 @@ void read_input_file(char *fname) {
     read_res=fscanf(f,"symmetric_torque = %s \n",tmpstr);
     set_bool(tmpstr,&planet.symmetric_torque);
 
+    read_res=fscanf(f,"nonlocal_torque = %s \n",tmpstr);
+    set_bool(tmpstr,&params.nonlocal_torque);
     read_res=fscanf(f,"hs_visc = %s \n",tmpstr);
     set_bool(tmpstr,&params.hs_visc);
 
@@ -1072,12 +1410,14 @@ void write_hdf5_file(void) {
       write_hdf5_double(fld.lami,dims1,1,mesh_id,"lami");
       write_hdf5_double(fld.mdoti,dims1,1,mesh_id,"mdoti");
       write_hdf5_double(fld.nu_grid,dims1,1,mesh_id,"nu_grid");
+    write_hdf5_double(tauc,dims1,1,mesh_id,"tauc");
+    write_hdf5_double(taumin,dims1,1,mesh_id,"taumin");
 // Write Matrix
    write_hdf5_double(matrix.md,dims1,1,matrix_id,"md");
     write_hdf5_double(matrix.ld,dims1_small,1,matrix_id,"ld");
     write_hdf5_double(matrix.ud,dims1_small,1,matrix_id,"ud");
    write_hdf5_double(matrix.fm,dims1,1,matrix_id,"fm");
-
+   write_hdf5_double(matrix.col,dims1,1,matrix_id,"col");
 
 // Write Solution
     write_hdf5_double(fld.sol,dims2,2,solution_id,"lam");
@@ -1139,6 +1479,7 @@ void write_hdf5_params(hid_t *params_id) {
     out_par.move_planet_implicit = params.move_planet_implicit;
     out_par.gaussian = planet.gaussian;
     out_par.symmetric_torque = planet.symmetric_torque;
+    out_par.nonlocal_torque = params.nonlocal_torque;
     out_par.hs_visc = params.hs_visc;
     out_par.one_sided = planet.onesided;
     out_par.a = planet.a;
@@ -1187,6 +1528,7 @@ void write_hdf5_params(hid_t *params_id) {
  HDF5_INSERT_ERROR(H5Tinsert (memtype, "gaussian", HOFFSET (param_t, gaussian), H5T_NATIVE_INT));
  
  HDF5_INSERT_ERROR(H5Tinsert (memtype, "symmetric_torque", HOFFSET (param_t, symmetric_torque), H5T_NATIVE_INT));
+ HDF5_INSERT_ERROR(H5Tinsert (memtype, "nonlocal_torque", HOFFSET (param_t, nonlocal_torque), H5T_NATIVE_INT));
  HDF5_INSERT_ERROR(H5Tinsert (memtype, "hs_visc", HOFFSET (param_t, hs_visc), H5T_NATIVE_INT));
 
     HDF5_INSERT_ERROR(H5Tinsert (memtype, "one_sided", HOFFSET (param_t, one_sided), H5T_NATIVE_DOUBLE));
@@ -1250,7 +1592,13 @@ void steadystate_config(SteadyStateField *tmpfld, double a) {
 
     tmpfld->ivals[0] = 0;
     for(i=1;i<NR;i++) {
-        res = -dlr*dTr(rc[i],a)*sqrt(rc[i])/(3*nu(rc[i]));
+        if (params.nonlocal_torque) {
+            res = -dlr*dTr_nl(rc[i],i,a,TRUE)*rc[i]*sqrt(rc[i])/(3*nu(rc[i]));
+
+        }
+        else {
+            res = -dlr*dTr(rc[i],a)*sqrt(rc[i])/(3*nu(rc[i]));
+        }
         tmpfld->ivals[i] = tmpfld->ivals[i-1] + res;
     }
 
@@ -1307,6 +1655,101 @@ void steadystate_config(SteadyStateField *tmpfld, double a) {
 
     tmpfld->vs /= (planet.mp*params.mth);
     */
+#pragma omp parallel for private(i)
+    for(i=0;i<NR;i++) {
+        
+        tmpfld->lam0[i] = (tmpfld->mdot0) * 2*rc[i] *( 1- sqrt(params.ri/rc[i]))/(3*nu(rc[i]));
+//        tmpfld->lam0[i] += params.bc_lam[0] /pow(rc[i]/params.ri,params.gamma-.5);
+       
+        if (tmpfld->lam0[i] == 0) {
+            tmpfld->lamp[i] = 0;
+        }
+        else {
+            tmpfld->lamp[i] = (tmpfld->lam[i] - tmpfld->lam0[i])/(tmpfld->lam0[i]);
+        }
+
+    }
+
+    tmpfld->vs = tmpfld->lamp[NR-1];
+    tmpfld->vs *= -2*sqrt(planet.a) * params.bc_mdot * (sqrt(rc[NR-1])-sqrt(params.ri));
+    tmpfld->vs /= (planet.mp*params.mth);
+    return;
+
+}
+
+void steadystate_config_nl(SteadyStateField *tmpfld, double a) {
+    int i;
+    double res;
+
+    tmpfld->a = a;
+
+    params.k
+
+
+    tmpfld->ivals[0] = 0;
+    for(i=1;i<NR;i++) {
+        if (params.nonlocal_torque) {
+            res = -dlr*dTr_nl(rc[i],i,a,TRUE)*rc[i]*sqrt(rc[i])/(3*nu(rc[i]));
+
+        }
+        else {
+            res = -dlr*dTr(rc[i],a)*sqrt(rc[i])/(3*nu(rc[i]));
+        }
+        tmpfld->ivals[i] = tmpfld->ivals[i-1] + res;
+    }
+
+#pragma omp parallel for private(i)
+    for(i=0;i<NR;i++) {
+        tmpfld->ivals[i] = exp(tmpfld->ivals[i]); // * pow(rc[i]/params.ri,params.gamma-.5);
+    }
+
+
+    tmpfld->kvals[0] = 0;
+    for(i=1;i<NR;i++) {
+//        res = dr[i]*tmpfld->ivals[i]/(3*nu(rc[i]));
+        res = dlr * (tmpfld->ivals[i])*sqrt(rc[i])/2;
+        tmpfld->kvals[i] = tmpfld->kvals[i-1] + res;
+    }
+
+    if (params.flux_bc) {
+        tmpfld->mdot = params.bc_mdot;
+    }
+    else {
+        tmpfld->mdot = (params.bc_lam[1]*tmpfld->ivals[NR-1] - params.bc_lam[0])/tmpfld->kvals[NR-1];
+    }
+
+    if (params.flux_bc) {
+        
+#pragma omp parallel for private(i)
+        for(i=0;i<NR;i++) {
+         tmpfld->lam[i] =  (tmpfld->mdot * tmpfld->kvals[i])/tmpfld->ivals[i];
+         tmpfld->lam[i] *= 2*sqrt(rc[i])/(3*nu(rc[i]));
+
+         }
+    }
+    else {
+#pragma omp parallel for private(i)
+        for(i=0;i<NR;i++) {
+         tmpfld->lam[i] = (params.bc_lam[0] + tmpfld->mdot * tmpfld->kvals[i])/tmpfld->ivals[i];
+
+         }
+    }
+    if (params.flux_bc) {
+        tmpfld->mdot0 = params.bc_mdot;
+    }
+    else {
+        tmpfld->mdot0 = 1.5*params.alpha*params.h*params.h;
+        tmpfld->mdot0  *= (params.bc_lam[1]*pow(params.ro,params.gamma-.5)-params.bc_lam[0]*pow(params.ri,params.gamma-.5))/(sqrt(params.ro)-sqrt(params.ri));
+    }
+
+//    tmpfld->vs = (tmpfld->lam[NR-1])*nu(params.ro)*1.5/sqrt(params.ro)
+//                     -(tmpfld->mdot)*(sqrt(params.ro)-sqrt(params.ri));
+//    tmpfld->vs *=  -2*sqrt(planet.a)/(planet.mp*params.mth);
+//
+//    
+//    tmpfld->vs = -1.5*params.alpha*params.h*params.h*2*sqrt(a)*(params.bc_lam[1]-params.bc_lam[0]) *(1 - (tmpfld->mdot)/(tmpfld->mdot0));
+//
+//    tmpfld->vs /= (planet.mp*params.mth);
 #pragma omp parallel for private(i)
     for(i=0;i<NR;i++) {
         

@@ -35,6 +35,7 @@ typedef struct Parameters {
     int flux_bc;
     double release_time;
     char outputname[MAXSTRLEN];
+    int nonlocal_torque;
 } Parameters;
 
 
@@ -59,6 +60,7 @@ typedef struct param_t {
     int move_planet_implicit;
     int gaussian;
     int symmetric_torque;
+    int nonlocal_torque;
     int hs_visc;
     double one_sided;
     double a;
@@ -82,7 +84,9 @@ typedef struct Planet {
 
 typedef struct TridDiagMat {
     int size;
+    int icol;
     double *md, *ld, *ud, *fm;
+    double *col;
 } TriDiagMat;
 
 typedef struct Field {
@@ -118,6 +122,7 @@ typedef struct SteadyStateField {
 
 
 double *rc, *rmin, *lam, *dr;
+double *taumin, *tauc;
 double *lrc, *lrmin;
 double *mass, *ones, *mdot;
 double dlr;
@@ -166,3 +171,10 @@ void allocate_field(Field *tmpfld);
 void free_field(Field *tmpfld);
 int locate(double *, int , double);
 void linear_interpolation(double *, double *, double *, double *, int, int);
+
+void trisolve_sm(double *, double *, double *, double *,double *,double *, int, int);
+void crank_nicholson_step_nl(double,double,double *);
+double tau_integrand(double );
+void set_tau(double );
+double calc_coeffs_nl(double,double,int);
+double dTr_nl(double, int, double, int);

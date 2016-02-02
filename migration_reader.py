@@ -27,6 +27,7 @@ class Parameters():
         ('move_planet_implicit',bool),
         ('gaussian',bool),
         ('symmetric_torque',bool),
+        ('nonlocal_torque',bool),
         ('hs_visc',bool),
         ('one_sided',float),
         ('a',float),
@@ -100,6 +101,8 @@ class Sim(Parameters):
 
         self.rc = mesh['rc'][:]
         self.dr = mesh['dr'][:]
+        self.tauc = mesh['tauc'][:]
+        self.taum = mesh['taumin'][:]
         self.dlr = self.dr/self.rc
         self.rmin=mesh['rmin'][:]
         self.lam0 = mesh['lami'][:]
@@ -109,7 +112,7 @@ class Sim(Parameters):
         self.lower_diag = mat['ld'][:]
         self.upper_diag = mat['ud'][:]
         self.rhs = mat['fm'][:]
-
+        self.col = mat['col'][:]
 
         self.lam_ss = ss['lam_ss'][:].transpose()
         self.lamp = ss['lamp'][:].transpose()
