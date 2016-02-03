@@ -521,7 +521,7 @@ void set_weights( double *w,double *u,double a, int ia, int n) {
 //#pragma omp parallel for private(i) shared(a,rc,dr,ia)
    for(i=0;i<ia;i++) {
         
-        w[i] = dr[i]*dTr(rc[i],a)/rc[i];  // w lower
+        w[i] = dlr*dTr(rc[i],a);  // w lower
         w[i+n] = 0;                       // w upper
 
         if ((fabs(rc[i]-a) > leftr) && (fabs(rc[i]-a) < rightr)) {
@@ -539,7 +539,7 @@ void set_weights( double *w,double *u,double a, int ia, int n) {
 
 //#pragma omp parallel for private(i) shared(a,rc,dr)
     for(i=ia;i<n;i++) { 
-        w[i+n] = dr[i]*dTr(rc[i],a)/rc[i];  // w upper
+        w[i+n] = dlr*dTr(rc[i],a);  // w upper
         w[i] = 0;                           // w lower
         if ((fabs(rc[i]-a) > leftr) && (fabs(rc[i]-a) < rightr)) {
             norm = 1/hp;
@@ -606,11 +606,13 @@ void crank_nicholson_step_nl(double dt, double aplanet, double *y) {
     }
     else {
         set_weights(matrix.w,matrix.u,aplanet,matrix.icol,NR);
+        /*
         fout=fopen("matrix_test.dat","w");
         for(i=0;i<NR;i++) {
             fprintf(fout,"%lg\t%lg\t%lg\t%lg\t%lg\t%lg\n",rc[i],matrix.w[i],matrix.w[i+NR],matrix.u[i+NR],matrix.u[i+NR*2],matrix.u[i]);
         }
-        fclose(fout);
+      fclose(fout);
+      */
     }
 
 #pragma omp parallel for private(i,rm,rp,am,ap,bm,bp) shared(matrix,rc,rmin)
@@ -664,14 +666,14 @@ void crank_nicholson_step_nl(double dt, double aplanet, double *y) {
         nlfac = y[matrix.icol];
     }
     else {
-#pragma omp parallel for private(i) reduction(+:nlfac)
+#pragma omp parallel for private(i) reduction(+:nlfac,nlfac2)
         for(i=0;i<NR;i++) {
             nlfac += matrix.w[i]*y[i];
             nlfac2 += matrix.w[i+NR]*y[i];
         }
     }
 
-#pragma omp parallel for private(i) shared(y,dr,matrix)
+#pragma omp parallel for private(i) shared(nlfac,nlfac2,y,dr,matrix)
     for(i=0;i<NR;i++) {
         matrix.fm[i] += dr[i]*y[i];
         if (!params.shock_dep) {
@@ -796,6 +798,7 @@ void trisolve_smn(double *ld, double *md, double *ud, double *d,double *sol, dou
             sol2[i+indx] = dp[i+indx] - cp[i+cindx]*sol2[i+1+indx];
         }
     }
+
 /* Sol contains the solutions to the nsol rhs 
  * Now we combine them using the nsol weights
  */
@@ -807,24 +810,22 @@ void trisolve_smn(double *ld, double *md, double *ud, double *d,double *sol, dou
         for(j=0;j<nsol;j++) {
             /* Compute w_i dot sol2_j */
             res = 0;
-//#pragma omp parallel for private(i,j,k) reduction(+:res)
+#pragma omp parallel for private(i,j,k) reduction(+:res)
             for(k=0;k<n;k++) {
-                res += wn[k + n*i] * sol2[k+j*nsol]; 
+                res += wn[k + n*i] * sol2[k+j*n]; 
             }
-            if (i==j) res += 1;
             cp2[j+nsol*i] = res;
         }
     }
-    double fac1 = cp2[2+2*nsol] + cp2[2+nsol]*cp2[1+2*nsol]/cp2[1+nsol];
-    double fac2 = cp2[0 + 2*nsol] + cp2[2*nsol+1]*cp2[nsol+0]/cp2[nsol+1];
-    fac2 /= fac1;
-    fac1 *= cp2[nsol+2]*cp2[2*nsol+1]*cp2[nsol+0]/(cp2[nsol+1]*cp2[nsol+1]);
-    fac1 += cp2[nsol+0]/cp2[nsol+1];
-
-
+    double fac1,fac2,fac3;
+    fac1=cp2[0]/(1+cp2[1]);
+    fac2=cp2[2]/(1+cp2[1]);
+    fac3=(-cp2[nsol]+fac1*cp2[nsol+1])/(1+cp2[nsol+2]-fac2*cp2[nsol+1]);
+    
+    
 #pragma omp parallel for private(i)
     for(i=0;i<n;i++) {
-        sol[i] = sol2[i] + fac1*sol2[i+nsol] + fac2*sol2[i+nsol*2];
+        sol[i] = sol2[i]- (fac1+fac2*fac3)*sol2[i+n] + fac3*sol2[i+n*2];
 
     }
 
