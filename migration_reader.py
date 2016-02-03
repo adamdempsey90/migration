@@ -28,6 +28,7 @@ class Parameters():
         ('gaussian',bool),
         ('symmetric_torque',bool),
         ('nonlocal_torque',bool),
+        ('shock_dep',bool),
         ('hs_visc',bool),
         ('one_sided',float),
         ('a',float),
@@ -37,6 +38,7 @@ class Parameters():
         ('delta',float),
         ('c',float),
         ('eps', float),
+        ('xd',float),
         ('outputname',str)])
 
     comment_lines = {'nr':'#Grid Parameters:', 'alpha':'\n\n#Disk Parameters:','bc_lam_inner':'\n\n#Boundary Conditions:', 'dt':'\n\n#Time Parameters:','planet_torque':'\n\n#Planet Properties:'}
@@ -112,7 +114,10 @@ class Sim(Parameters):
         self.lower_diag = mat['ld'][:]
         self.upper_diag = mat['ud'][:]
         self.rhs = mat['fm'][:]
-        self.col = mat['col'][:]
+        try:
+            self.col = mat['col'][:]
+        except KeyError:
+            print 'Could not find col entry in file'
 
         self.lam_ss = ss['lam_ss'][:].transpose()
         self.lamp = ss['lamp'][:].transpose()

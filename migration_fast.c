@@ -48,8 +48,14 @@ int main(int argc, char *argv[]) {
         fld.sol[i] = 0;
         fld.sol_mdot[i] = 0;
     }
-    
-    steadystate_config(&fld_ss,planet.a);
+   
+    if (params.planet_torque && params.nonlocal_torque && params.shock_dep) {
+        steadystate_config_nl(&fld_ss,planet.a);
+
+    }
+    else {
+        steadystate_config(&fld_ss,planet.a);
+    }
 //    steadystate_config_nl(&fld_ss,planet.a);
 
     fld.vs_ss[0] = fld_ss.vs;
@@ -95,8 +101,14 @@ int main(int argc, char *argv[]) {
         set_mdot(params.planet_torque);     
         fld.avals[i] = planet.a;
         fld.vs[i] = planet.vs;
-    
-        steadystate_config(&fld_ss,planet.a);
+        
+
+        if (params.planet_torque && params.nonlocal_torque && params.shock_dep) {
+            steadystate_config_nl(&fld_ss,planet.a);
+        }
+        else {
+            steadystate_config(&fld_ss,planet.a);
+        }
         fld.vs_ss[i] = fld_ss.vs;
         fld.mdot_ss[i] = fld_ss.mdot;
         fld.efficiency[i] = fld_ss.mdot/fld_ss.mdot0;
@@ -301,31 +313,48 @@ void calc_coeffs(double x, double dx,double *a, double *b,double rp,int planet_t
 }
 
 double dTr_nl(double x, int i, double rp, int centered) {
-    double tsh = 1.89 + .53/planet.mp;
-    double f0 = params.eps; //.45;
-    double T0 = (planet.mp*params.mth)*(planet.mp*params.mth)/params.mth;
-    double norm = sqrt(tsh) * f0 * T0 * .5/M_PI;
-    norm /= rp;
-    
-    double tauval;
-    if (centered) {
-        tauval = tauc[i];
-    }
-    else {
-        tauval= taumin[i];
-    }
 
+    if (params.shock_dep) {
 
-    if (tauval <= tsh) {
-        return 0;
-    }
-    if (x < rp) {
-        return -norm*tau_integrand(x/rp)*pow(tauval,-1.5);//sqrt(x);
-    }
-    else {
-        return norm*tau_integrand(x/rp)*pow(tauval,-1.5);//sqrt(x);
-    } 
+        double tsh = 1.89 + .53/planet.mp;
+        double f0 = planet.eps; //.45;
+        double T0 = (planet.mp*params.mth)*(planet.mp*params.mth)/params.mth;
+        double norm = sqrt(tsh) * f0 * T0 * .5/M_PI;
+        norm /= rp;
         
+        double tauval;
+        if (centered) {
+            tauval = tauc[i];
+        }
+        else {
+            tauval= taumin[i];
+        }
+
+
+        if (tauval <= tsh) {
+            return 0;
+        }
+        if (x < rp) {
+            return -norm*tau_integrand(x/rp)*pow(tauval,-1.5);//sqrt(x);
+        }
+        else {
+            return norm*tau_integrand(x/rp)*pow(tauval,-1.5);//sqrt(x);
+        } 
+    }
+    else {
+///        double fac = dTr(x,rp)/x;
+        double nlfac=0;
+        double xd = planet.xd;
+        double hp = params.h*rp;
+        double left_region = (xd-1)*hp/2;
+        double right_region = (xd+1)*hp/2;
+        if ( (fabs(x-rp) > left_region) && (fabs(x-rp) < right_region)) {
+       //     printf("%lg inside %lg and %lg\n",(x-rp)/hp,left_region,right_region);
+            nlfac = 1./hp;
+        }
+        return nlfac;
+
+    }
 }
 
 
@@ -477,6 +506,58 @@ void crank_nicholson_step(double dt, double aplanet, double *y) {
     return;
 }
 
+void set_weights( double *w,double *u,double a, int ia, int n) {
+    int i;
+
+    double hp = params.h * a;
+    double xd = planet.xd;
+
+    double leftr = (xd-1)*hp/2;
+    double rightr = (xd+1)*hp/2;
+
+    double norm;
+
+/* Lower then upper */
+//#pragma omp parallel for private(i) shared(a,rc,dr,ia)
+   for(i=0;i<ia;i++) {
+        
+        w[i] = dr[i]*dTr(rc[i],a)/rc[i];  // w lower
+        w[i+n] = 0;                       // w upper
+
+        if ((fabs(rc[i]-a) > leftr) && (fabs(rc[i]-a) < rightr)) {
+            norm = 1/hp;
+        }
+        else {
+            norm=0;
+        }
+        u[i+n] = -2*sqrt(rmin[i+1])*norm;  // u lower 
+        u[i+n] -= -2*sqrt(rmin[i])*norm;
+        //printf("%lg\t%lg\n",(rmin[i]-a)/(params.h*a),dTr_nl(rmin[i+1],a,ia,TRUE));
+        u[i+n*2] = 0;                     // u upper
+    }
+
+
+//#pragma omp parallel for private(i) shared(a,rc,dr)
+    for(i=ia;i<n;i++) { 
+        w[i+n] = dr[i]*dTr(rc[i],a)/rc[i];  // w upper
+        w[i] = 0;                           // w lower
+        if ((fabs(rc[i]-a) > leftr) && (fabs(rc[i]-a) < rightr)) {
+            norm = 1/hp;
+        }
+        else {
+            norm=0;
+        }
+        u[i+n*2] =  -2*sqrt(rmin[i+1])*norm;
+        u[i+n*2] -= -2*sqrt(rmin[i])*norm;   // u upper
+        u[i+n] = 0;                           // u lower
+    }
+
+    if (params.flux_bc) {
+        u[n] = 0; //-2*sqrt(rmin[1])*dTr_nl(rmin[1],i,a,TRUE);
+        u[2*n+NR-1] =0;// 2*sqrt(rmin[NR-1])*dTr_nl(rmin[NR-1],i,a,TRUE);
+    }
+    return;
+}
 
 void crank_nicholson_step_nl(double dt, double aplanet, double *y) {
     int i;
@@ -488,25 +569,49 @@ void crank_nicholson_step_nl(double dt, double aplanet, double *y) {
         matrix.md[i] = 0;
         matrix.ud[i] = 0;
         matrix.ld[i] = 0;
-        matrix.col[i] = 0;
+        matrix.u[i] = 0;
+        if (!params.shock_dep) {
+            matrix.u[i+NR] = 0;
+            matrix.u[i+2*NR] = 0;
+        }
+        matrix.w[i] = 0;
         if (rmin[i] >= aplanet) {
             if (need_set_flag) { 
                 matrix.icol = i;
+                if (params.shock_dep) {
+                    matrix.w[matrix.icol] = 1;
+                }
                 need_set_flag = FALSE;
             }
         }
     }
 
 
+
     if (need_set_flag) {
         printf("Couldnt find planet in domain, a=%lg\n Setting planet to last grid point at r=%lg\n",aplanet,rc[NR-1]);
         matrix.icol = NR-1;
+        if (params.shock_dep) {
+             matrix.w[matrix.icol] = NR-1;
+         }
+
     }
     matrix.md[NR-1] = 0;
     matrix.fm[NR-1] = 0;
+    
+    FILE *fout;
 
-    set_tau(aplanet);
-
+    if (params.shock_dep) {
+        set_tau(aplanet);
+    }
+    else {
+        set_weights(matrix.w,matrix.u,aplanet,matrix.icol,NR);
+        fout=fopen("matrix_test.dat","w");
+        for(i=0;i<NR;i++) {
+            fprintf(fout,"%lg\t%lg\t%lg\t%lg\t%lg\t%lg\n",rc[i],matrix.w[i],matrix.w[i+NR],matrix.u[i+NR],matrix.u[i+NR*2],matrix.u[i]);
+        }
+        fclose(fout);
+    }
 
 #pragma omp parallel for private(i,rm,rp,am,ap,bm,bp) shared(matrix,rc,rmin)
     for(i=1;i<NR-1;i++) {
@@ -520,10 +625,10 @@ void crank_nicholson_step_nl(double dt, double aplanet, double *y) {
         matrix.ld[i-1] = (-am + bm)*dt/2.;
         matrix.ud[i] = (ap + bp)*dt/2.;
 
-        if (params.planet_torque) {
+        if (params.planet_torque && params.shock_dep) {
             am  = calc_coeffs_nl(rm,aplanet,i);
             ap = calc_coeffs_nl(rp,aplanet,i+1);
-            matrix.col[i] = (ap-am)*dt/2.;
+            matrix.u[i] = (ap-am)*dt/2.;
         }
 
       }
@@ -537,21 +642,48 @@ void crank_nicholson_step_nl(double dt, double aplanet, double *y) {
         matrix.fm[0] = -params.bc_mdot*dt;
         matrix.fm[NR-1] = params.bc_mdot*dt;
 
-        if (params.planet_torque) {
+        if (params.planet_torque && params.shock_dep) {
             am=calc_coeffs_nl(rmin[NR-1],aplanet,NR-1);
             ap=calc_coeffs_nl(rmin[1],aplanet,1);
-            matrix.col[0] = ap*dt/2.;
-            matrix.col[NR-1] = -am*dt/2.;
+            matrix.u[0] = ap*dt/2.;
+            matrix.u[NR-1] = -am*dt/2.;
+        }
+    }
+    
+    if (params.planet_torque && !params.shock_dep) {
+        for(i=0;i<matrix.nsol*NR;i++) {
+            matrix.u[i] *= dt/2.;
+        }
+    }
+    
+    matvec(matrix.ld,matrix.md,matrix.ud,y,matrix.fm,NR);
+    
+    double nlfac=0;
+    double nlfac2 = 0;
+    if (params.shock_dep) {
+        nlfac = y[matrix.icol];
+    }
+    else {
+#pragma omp parallel for private(i) reduction(+:nlfac)
+        for(i=0;i<NR;i++) {
+            nlfac += matrix.w[i]*y[i];
+            nlfac2 += matrix.w[i+NR]*y[i];
         }
     }
 
-    matvec(matrix.ld,matrix.md,matrix.ud,y,matrix.fm,NR);
-
 #pragma omp parallel for private(i) shared(y,dr,matrix)
     for(i=0;i<NR;i++) {
-        matrix.fm[i] += dr[i]*y[i] + matrix.col[i]*y[matrix.icol] ;
+        matrix.fm[i] += dr[i]*y[i];
+        if (!params.shock_dep) {
+            matrix.fm[i] += matrix.u[i+NR*2]*nlfac2 + matrix.u[i+NR]*nlfac;
+            matrix.u[i+NR] *= -1;
+            matrix.u[i+2*NR] *= -1;
+        }
+        else {
+            matrix.fm[i] += matrix.u[i]*nlfac;
+            matrix.u[i] *= -1;
+        }
         matrix.md[i] = dr[i] - matrix.md[i];
-        matrix.col[i] *= -1;
         if (i<NR-1) {
             matrix.ld[i] *= -1;
             matrix.ud[i] *= -1;
@@ -571,12 +703,19 @@ void crank_nicholson_step_nl(double dt, double aplanet, double *y) {
     if (!params.flux_bc) {
         matrix.md[NR-1] = 1;
         matrix.ld[NR-2] = 0;
-        matrix.col[NR-1] = 0;
+
+        if (params.shock_dep) {
+            matrix.u[NR-1] = 0;
+            matrix.u[0] = 0;
+        }
+        else {
+            matrix.u[NR-1+NR*2] = 0;
+            matrix.u[0 + NR] = 0;
+        }
         matrix.fm[NR-1] = params.bc_lam[1];
 
         matrix.md[0] = 1;
         matrix.ud[0] = 0;
-        matrix.col[0] = 0;
         matrix.fm[0] = params.bc_lam[0];
     }
     else {
@@ -584,20 +723,119 @@ void crank_nicholson_step_nl(double dt, double aplanet, double *y) {
         if (params.bc_lam[0] == 0) {
             matrix.md[0] = 1;
             matrix.ud[0] = 0;
-            matrix.col[0] = 0;
+            if (params.shock_dep) {
+                matrix.u[0] = 0;
+            }
+            else {
+                matrix.u[0+NR] = 0;
+            }
             matrix.fm[0] = params.bc_lam[0];
         }
     }
 
-    trisolve_sm(matrix.ld,matrix.md,matrix.ud,matrix.fm,y,matrix.col,matrix.icol,NR);
 
+    if (params.shock_dep) {
+       trisolve_sm(matrix.ld,matrix.md,matrix.ud,matrix.fm,y,matrix.u,matrix.w,matrix.icol,NR);
+    }
+    else {
+        for (i=0;i<NR;i++) {
+            matrix.u[i] = matrix.fm[i];
+        }
+       trisolve_smn(matrix.ld,matrix.md,matrix.ud,matrix.u,y,matrix.w,matrix.nsol,NR);
+
+    }
 
     return;
 }
 
+void trisolve_smn(double *ld, double *md, double *ud, double *d,double *sol, double *wn, int nsol, int n) {
+    /* Thomas algorithm using Shermin-Morrison formula for an extra matrix A + u w^T, col, at index icol
+     */
+     /* only works for nsol = 3 for now */
 
-void trisolve_sm(double *ld, double *md, double *ud, double *d,double *sol,double *col, int icol, int n) {
-    /* Thomas algorithm using Shermin-Morrison formula for an extra column, col, at index icol
+
+    int i,j;
+    double *cp, *bp, *dp;
+    double *cp2;
+    double *sol2;
+     cp =  (double *)malloc(sizeof(double)*(n-1)*nsol);
+    bp =  (double *)malloc(sizeof(double)*n*nsol);
+    dp =  (double *)malloc(sizeof(double)*n*nsol);
+    
+    cp2 = (double *)malloc(sizeof(double)*nsol*(nsol-1));
+
+     sol2 =  (double *)malloc(sizeof(double)*n*nsol);
+  
+     int indx,cindx;
+    for(j=0;j<nsol;j++) {
+        indx = j*n;
+        cindx = j*(n-1);
+        for(i=0;i<n-1;i++) { 
+            cp[i+cindx] = 0;
+            bp[i+indx] = 1;
+            dp[i+indx] = 0;
+        }
+        bp[n-1 + indx] = 0;
+        dp[n-1 + indx] = 0;
+    
+
+    
+        cp[0+cindx] = ud[0]/md[0];
+
+
+        for(i=1;i<n-1;i++) {
+            cp[i+cindx] = ud[i]/(md[i]- ld[i-1]*cp[i-1+cindx]);
+        }
+        dp[0+indx] = d[0+indx]/md[0];
+        for(i=1;i<n;i++) {
+            dp[i+indx] = (d[i+indx] - ld[i-1]*dp[i-1+indx])/(md[i]-ld[i-1]*cp[i-1+cindx]);
+        }
+
+        sol2[n-1+indx] = dp[n-1+indx];
+        for(i=n-2;i>=0;i--) {
+            sol2[i+indx] = dp[i+indx] - cp[i+cindx]*sol2[i+1+indx];
+        }
+    }
+/* Sol contains the solutions to the nsol rhs 
+ * Now we combine them using the nsol weights
+ */
+
+    int k;
+    double res;
+
+    for(i=0;i<nsol-1;i++) {
+        for(j=0;j<nsol;j++) {
+            /* Compute w_i dot sol2_j */
+            res = 0;
+//#pragma omp parallel for private(i,j,k) reduction(+:res)
+            for(k=0;k<n;k++) {
+                res += wn[k + n*i] * sol2[k+j*nsol]; 
+            }
+            if (i==j) res += 1;
+            cp2[j+nsol*i] = res;
+        }
+    }
+    double fac1 = cp2[2+2*nsol] + cp2[2+nsol]*cp2[1+2*nsol]/cp2[1+nsol];
+    double fac2 = cp2[0 + 2*nsol] + cp2[2*nsol+1]*cp2[nsol+0]/cp2[nsol+1];
+    fac2 /= fac1;
+    fac1 *= cp2[nsol+2]*cp2[2*nsol+1]*cp2[nsol+0]/(cp2[nsol+1]*cp2[nsol+1]);
+    fac1 += cp2[nsol+0]/cp2[nsol+1];
+
+
+#pragma omp parallel for private(i)
+    for(i=0;i<n;i++) {
+        sol[i] = sol2[i] + fac1*sol2[i+nsol] + fac2*sol2[i+nsol*2];
+
+    }
+
+    free(cp); free(bp); free(dp);
+    free(cp2);
+    free(sol2);
+    return;
+}
+
+void trisolve_sm(double *ld, double *md, double *ud, double *d,double *sol,double *u, double *w, int icol, int n) {
+    /* Thomas algorithm using Shermin-Morrison formula for an extra matrix A + u w^T, col, at index icol
      */
 
     int i;
@@ -636,10 +874,10 @@ void trisolve_sm(double *ld, double *md, double *ud, double *d,double *sol,doubl
         cp2[i] = ud[i]/(md[i]- ld[i-1]*cp2[i-1]);
     }
     dp[0] = d[0]/md[0];
-    dp2[0] = col[0]/md[0];
+    dp2[0] = u[0]/md[0];
     for(i=1;i<n;i++) {
         dp[i] = (d[i] - ld[i-1]*dp[i-1])/(md[i]-ld[i-1]*cp[i-1]);
-        dp2[i] = (col[i] - ld[i-1]*dp2[i-1])/(md[i]-ld[i-1]*cp2[i-1]);
+        dp2[i] = (u[i] - ld[i-1]*dp2[i-1])/(md[i]-ld[i-1]*cp2[i-1]);
     }
 
     sol[n-1] = dp[n-1];
@@ -649,9 +887,17 @@ void trisolve_sm(double *ld, double *md, double *ud, double *d,double *sol,doubl
         sol2[i] = dp2[i] - cp2[i]*sol2[i+1];
     }
 
-    double fac = sol[icol]/(1+sol2[icol]);
+    double fac1 = 0;
+    double fac2 = 0;
+#pragma omp parallel for private(i) reduction(+:fac1,fac2) 
     for(i=0;i<n;i++) {
-        sol[i]  -= fac*sol2[i];
+        fac1 += sol[i]*w[i];
+        fac2 += sol2[i]*w[i]; 
+    }
+    fac1 /= (1+fac2);
+    
+    for(i=0;i<n;i++) {
+        sol[i]  -= fac1*sol2[i];
     }
 
     free(cp); free(bp); free(dp);
@@ -762,12 +1008,24 @@ void init_lam(void) {
 void set_matrix(void) {
     int i;
     matrix.size = NR;
+    if (params.nonlocal_torque && !params.shock_dep) {
+        matrix.nsol = 3;
+
+        MALLOC_SAFE(( matrix.u =  (double *)malloc(sizeof(double)*NR*matrix.nsol))); 
+        MALLOC_SAFE(( matrix.w =  (double *)malloc(sizeof(double)*NR*(matrix.nsol-1)))); 
+    }
+    else {
+        matrix.nsol = 1;
+        MALLOC_SAFE(( matrix.u =  (double *)malloc(sizeof(double)*NR))); 
+        MALLOC_SAFE(( matrix.w =  (double *)malloc(sizeof(double)*NR))); 
+
+    }
+    
     matrix.icol = 0;
     MALLOC_SAFE(( matrix.ld = (double *)malloc(sizeof(double)*(NR-1))));
     MALLOC_SAFE(( matrix.md = (double *)malloc(sizeof(double)*NR)));
     MALLOC_SAFE(( matrix.ud =  (double *)malloc(sizeof(double)*(NR-1))));
     MALLOC_SAFE(( matrix.fm =  (double *)malloc(sizeof(double)*NR)));  
-    MALLOC_SAFE(( matrix.col =  (double *)malloc(sizeof(double)*NR))); 
 
     printf("Initializing matrices...\n"); 
     for(i=0;i<NR-1;i++) {
@@ -775,8 +1033,12 @@ void set_matrix(void) {
         matrix.md[i] = 0;
         matrix.ud[i] = 0;
         matrix.fm[i] = 0;
+        matrix.u[i] = 0;
+        matrix.w[i] = 0;
                 
     }
+    matrix.u[NR-1] = 0;
+    matrix.w[NR-1] = 0;
     matrix.md[NR-1] = 1;
     matrix.fm[NR-1] = 0;
     return;
@@ -830,7 +1092,7 @@ void free_grid(void) {
 
 void free_matrix(void) {
     free(matrix.md); free(matrix.ld); free(matrix.ud); free(matrix.fm);
-    free(matrix.col);
+    free(matrix.u); free(matrix.w);
     return;
 }
 double nu(double x) {
@@ -1328,6 +1590,8 @@ void read_input_file(char *fname) {
 
     read_res=fscanf(f,"nonlocal_torque = %s \n",tmpstr);
     set_bool(tmpstr,&params.nonlocal_torque);
+    read_res=fscanf(f,"shock_dep = %s \n",tmpstr);
+    set_bool(tmpstr,&params.shock_dep);
     read_res=fscanf(f,"hs_visc = %s \n",tmpstr);
     set_bool(tmpstr,&params.hs_visc);
 
@@ -1339,6 +1603,7 @@ void read_input_file(char *fname) {
     read_res=fscanf(f,"delta = %lg \n",&planet.delta);
     read_res=fscanf(f,"c = %lg \n",&planet.c);
     read_res=fscanf(f,"eps = %lg \n",&planet.eps);
+    read_res=fscanf(f,"xd = %lg \n",&planet.xd);
     
     read_res=fscanf(f,"outputname = %s\n",params.outputname); 
     fclose(f);
@@ -1417,7 +1682,6 @@ void write_hdf5_file(void) {
     write_hdf5_double(matrix.ld,dims1_small,1,matrix_id,"ld");
     write_hdf5_double(matrix.ud,dims1_small,1,matrix_id,"ud");
    write_hdf5_double(matrix.fm,dims1,1,matrix_id,"fm");
-   write_hdf5_double(matrix.col,dims1,1,matrix_id,"col");
 
 // Write Solution
     write_hdf5_double(fld.sol,dims2,2,solution_id,"lam");
@@ -1480,6 +1744,7 @@ void write_hdf5_params(hid_t *params_id) {
     out_par.gaussian = planet.gaussian;
     out_par.symmetric_torque = planet.symmetric_torque;
     out_par.nonlocal_torque = params.nonlocal_torque;
+    out_par.shock_dep = params.shock_dep;
     out_par.hs_visc = params.hs_visc;
     out_par.one_sided = planet.onesided;
     out_par.a = planet.a;
@@ -1489,6 +1754,7 @@ void write_hdf5_params(hid_t *params_id) {
     out_par.delta = planet.delta;
     out_par.c = planet.c;
     out_par.eps = planet.eps;
+    out_par.xd = planet.xd;
 
     memtype = H5Tcreate (H5T_COMPOUND, sizeof (param_t));
      HDF5_INSERT_ERROR(H5Tinsert (memtype, "nr", HOFFSET (param_t, nr), H5T_NATIVE_INT));
@@ -1529,6 +1795,7 @@ void write_hdf5_params(hid_t *params_id) {
  
  HDF5_INSERT_ERROR(H5Tinsert (memtype, "symmetric_torque", HOFFSET (param_t, symmetric_torque), H5T_NATIVE_INT));
  HDF5_INSERT_ERROR(H5Tinsert (memtype, "nonlocal_torque", HOFFSET (param_t, nonlocal_torque), H5T_NATIVE_INT));
+ HDF5_INSERT_ERROR(H5Tinsert (memtype, "shock_dep", HOFFSET (param_t, shock_dep), H5T_NATIVE_INT));
  HDF5_INSERT_ERROR(H5Tinsert (memtype, "hs_visc", HOFFSET (param_t, hs_visc), H5T_NATIVE_INT));
 
     HDF5_INSERT_ERROR(H5Tinsert (memtype, "one_sided", HOFFSET (param_t, one_sided), H5T_NATIVE_DOUBLE));
@@ -1539,8 +1806,9 @@ void write_hdf5_params(hid_t *params_id) {
       HDF5_INSERT_ERROR(H5Tinsert (memtype, "delta", HOFFSET (param_t, delta), H5T_NATIVE_DOUBLE));
       HDF5_INSERT_ERROR(H5Tinsert (memtype, "c",HOFFSET (param_t,c), H5T_NATIVE_DOUBLE));
         HDF5_INSERT_ERROR(H5Tinsert (memtype, "eps",HOFFSET (param_t,eps), H5T_NATIVE_DOUBLE));
+        HDF5_INSERT_ERROR(H5Tinsert (memtype, "xd",HOFFSET (param_t,xd), H5T_NATIVE_DOUBLE));
 
-   
+  printf("%lg\n\n\n",out_par.xd); 
 
 
   dspc_id = H5Screate_simple(1,dims,NULL);
@@ -1683,91 +1951,52 @@ void steadystate_config_nl(SteadyStateField *tmpfld, double a) {
 
     tmpfld->a = a;
 
-    params.k
-
-
-    tmpfld->ivals[0] = 0;
-    for(i=1;i<NR;i++) {
-        if (params.nonlocal_torque) {
-            res = -dlr*dTr_nl(rc[i],i,a,TRUE)*rc[i]*sqrt(rc[i])/(3*nu(rc[i]));
-
-        }
-        else {
-            res = -dlr*dTr(rc[i],a)*sqrt(rc[i])/(3*nu(rc[i]));
-        }
-        tmpfld->ivals[i] = tmpfld->ivals[i-1] + res;
-    }
-
-#pragma omp parallel for private(i)
-    for(i=0;i<NR;i++) {
-        tmpfld->ivals[i] = exp(tmpfld->ivals[i]); // * pow(rc[i]/params.ri,params.gamma-.5);
-    }
-
-
-    tmpfld->kvals[0] = 0;
-    for(i=1;i<NR;i++) {
-//        res = dr[i]*tmpfld->ivals[i]/(3*nu(rc[i]));
-        res = dlr * (tmpfld->ivals[i])*sqrt(rc[i])/2;
-        tmpfld->kvals[i] = tmpfld->kvals[i-1] + res;
-    }
+    double k = pow(planet.mp*params.mth,2)/(params.alpha*pow(params.h,5));
+    k /= (3*M_PI);
+    double f = 0;
+    double fac = 0;
+    double fp = planet.eps;
+    double tauval = 0;
+    double rval;
+    double tsh = 1.89 + .53/planet.mp;
+    set_tau(a);
 
     if (params.flux_bc) {
         tmpfld->mdot = params.bc_mdot;
-    }
-    else {
-        tmpfld->mdot = (params.bc_lam[1]*tmpfld->ivals[NR-1] - params.bc_lam[0])/tmpfld->kvals[NR-1];
-    }
-
-    if (params.flux_bc) {
-        
-#pragma omp parallel for private(i)
-        for(i=0;i<NR;i++) {
-         tmpfld->lam[i] =  (tmpfld->mdot * tmpfld->kvals[i])/tmpfld->ivals[i];
-         tmpfld->lam[i] *= 2*sqrt(rc[i])/(3*nu(rc[i]));
-
-         }
-    }
-    else {
-#pragma omp parallel for private(i)
-        for(i=0;i<NR;i++) {
-         tmpfld->lam[i] = (params.bc_lam[0] + tmpfld->mdot * tmpfld->kvals[i])/tmpfld->ivals[i];
-
-         }
-    }
-    if (params.flux_bc) {
         tmpfld->mdot0 = params.bc_mdot;
     }
-    else {
-        tmpfld->mdot0 = 1.5*params.alpha*params.h*params.h;
-        tmpfld->mdot0  *= (params.bc_lam[1]*pow(params.ro,params.gamma-.5)-params.bc_lam[0]*pow(params.ri,params.gamma-.5))/(sqrt(params.ro)-sqrt(params.ri));
-    }
-
-//    tmpfld->vs = (tmpfld->lam[NR-1])*nu(params.ro)*1.5/sqrt(params.ro)
-//                     -(tmpfld->mdot)*(sqrt(params.ro)-sqrt(params.ri));
-//    tmpfld->vs *=  -2*sqrt(planet.a)/(planet.mp*params.mth);
-//
-//    
-//    tmpfld->vs = -1.5*params.alpha*params.h*params.h*2*sqrt(a)*(params.bc_lam[1]-params.bc_lam[0]) *(1 - (tmpfld->mdot)/(tmpfld->mdot0));
-//
-//    tmpfld->vs /= (planet.mp*params.mth);
 #pragma omp parallel for private(i)
     for(i=0;i<NR;i++) {
         
         tmpfld->lam0[i] = (tmpfld->mdot0) * 2*rc[i] *( 1- sqrt(params.ri/rc[i]))/(3*nu(rc[i]));
 //        tmpfld->lam0[i] += params.bc_lam[0] /pow(rc[i]/params.ri,params.gamma-.5);
        
-        if (tmpfld->lam0[i] == 0) {
-            tmpfld->lamp[i] = 0;
+
+    }
+
+    for(i=0;i<NR;i++) {
+        tauval = tauc[i];
+        rval = rc[i];
+        if (tauval <= tsh) {
+            f = fp;
         }
         else {
-            tmpfld->lamp[i] = (tmpfld->lam[i] - tmpfld->lam0[i])/(tmpfld->lam0[i]);
+            f = fp*sqrt(tsh/tauval);
         }
 
+        fac = (sqrt(a)-sqrt(params.ri))/(sqrt(rval)-sqrt(params.ri));
+
+
+        tmpfld->lamp[i] = -(k*f*fac/(1+k*fp));
+        tmpfld->lam[i] = tmpfld->lam0[i]*(1+tmpfld->lamp[i]);
+    
     }
 
     tmpfld->vs = tmpfld->lamp[NR-1];
     tmpfld->vs *= -2*sqrt(planet.a) * params.bc_mdot * (sqrt(rc[NR-1])-sqrt(params.ri));
     tmpfld->vs /= (planet.mp*params.mth);
+
+    
     return;
 
 }

@@ -11,6 +11,7 @@ INCFLAGS=
 CC="gcc"
 if [ "$(uname)" != "Linux" ]
 then
+    CC="gcc-4.9"
     if [ $USER == zeus ]
     then
         LIBFLAGS=-L/usr/local/lib
