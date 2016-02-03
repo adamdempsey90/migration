@@ -506,6 +506,23 @@ void crank_nicholson_step(double dt, double aplanet, double *y) {
     return;
 }
 
+int in_region(double x, double a, double leftr, double rightr) {
+
+        double dist = fabs(x-a);
+        if ((dist >= leftr) && (dist <= rightr)) {
+            return TRUE;
+        }
+        else {
+            return FALSE;
+        }
+}
+
+double dep_func(double x, double a, double w) {
+
+    return exp(- (x-a)*(x-a)/(2*w*w))/(w * sqrt(2*M_PI));
+}
+
+
 void set_weights( double *w,double *u,double a, int ia, int n) {
     int i;
 
@@ -515,7 +532,7 @@ void set_weights( double *w,double *u,double a, int ia, int n) {
     double leftr = (xd-1)*hp/2;
     double rightr = (xd+1)*hp/2;
 
-    double norm;
+    double normL,normR;
 
 /* Lower then upper */
 //#pragma omp parallel for private(i) shared(a,rc,dr,ia)
@@ -524,14 +541,18 @@ void set_weights( double *w,double *u,double a, int ia, int n) {
         w[i] = dlr*dTr(rc[i],a);  // w lower
         w[i+n] = 0;                       // w upper
 
-        if ((fabs(rc[i]-a) > leftr) && (fabs(rc[i]-a) < rightr)) {
-            norm = 1/hp;
+//        normL = 1/hp ? in_region(rmin[i],a,leftr,rightr) : 0; 
+//        normR = 1/hp ? in_region(rmin[i+1],a,leftr,rightr) : 0;
+        normL = dep_func(rmin[i],a,hp);
+        normR = dep_func(rmin[i+1],a,hp);
+   
+        if (i==0) {
+            u[i+n] = -2*sqrt(rmin[i+1])*normR;
         }
         else {
-            norm=0;
+            u[i+n] = -2*sqrt(rmin[i+1])*normR;  // u lower 
+            u[i+n] -= -2*sqrt(rmin[i])*normL;
         }
-        u[i+n] = -2*sqrt(rmin[i+1])*norm;  // u lower 
-        u[i+n] -= -2*sqrt(rmin[i])*norm;
         //printf("%lg\t%lg\n",(rmin[i]-a)/(params.h*a),dTr_nl(rmin[i+1],a,ia,TRUE));
         u[i+n*2] = 0;                     // u upper
     }
@@ -541,14 +562,17 @@ void set_weights( double *w,double *u,double a, int ia, int n) {
     for(i=ia;i<n;i++) { 
         w[i+n] = dlr*dTr(rc[i],a);  // w upper
         w[i] = 0;                           // w lower
-        if ((fabs(rc[i]-a) > leftr) && (fabs(rc[i]-a) < rightr)) {
-            norm = 1/hp;
+//        normL = 1/hp ? in_region(rmin[i],a,leftr,rightr) : 0; 
+//        normR = 1/hp ? in_region(rmin[i+1],a,leftr,rightr) : 0;
+        normL = dep_func(rmin[i],a,hp);
+        normR = dep_func(rmin[i+1],a,hp);
+        if (i==n-1) {
+            u[i+n*2] = 2*sqrt(rmin[i])*normL;
         }
         else {
-            norm=0;
+            u[i+n*2] =  -2*sqrt(rmin[i+1])*normR;
+            u[i+n*2] -= -2*sqrt(rmin[i])*normL;   // u upper
         }
-        u[i+n*2] =  -2*sqrt(rmin[i+1])*norm;
-        u[i+n*2] -= -2*sqrt(rmin[i])*norm;   // u upper
         u[i+n] = 0;                           // u lower
     }
 
@@ -606,13 +630,13 @@ void crank_nicholson_step_nl(double dt, double aplanet, double *y) {
     }
     else {
         set_weights(matrix.w,matrix.u,aplanet,matrix.icol,NR);
-        /*
+       
         fout=fopen("matrix_test.dat","w");
         for(i=0;i<NR;i++) {
-            fprintf(fout,"%lg\t%lg\t%lg\t%lg\t%lg\t%lg\n",rc[i],matrix.w[i],matrix.w[i+NR],matrix.u[i+NR],matrix.u[i+NR*2],matrix.u[i]);
+            fprintf(fout,"%lg\t%lg\t%lg\t%lg\t%lg\t%lg\t%lg\n",rc[i],y[i],matrix.w[i],matrix.w[i+NR],matrix.u[i+NR],matrix.u[i+NR*2],matrix.u[i]);
         }
       fclose(fout);
-      */
+      
     }
 
 #pragma omp parallel for private(i,rm,rp,am,ap,bm,bp) shared(matrix,rc,rmin)
@@ -672,6 +696,8 @@ void crank_nicholson_step_nl(double dt, double aplanet, double *y) {
             nlfac2 += matrix.w[i+NR]*y[i];
         }
     }
+
+//    printf("Total torques\nOuter = %.2e\nInner = %.2e\n",nlfac2,nlfac);
 
 #pragma omp parallel for private(i) shared(nlfac,nlfac2,y,dr,matrix)
     for(i=0;i<NR;i++) {
@@ -1182,7 +1208,7 @@ double dTr(double x,double a) {
     }
    
     else {
-        xi = (x-a) / scaleH(x);
+        xi = (x-a) / scaleH(a);
 
 
  //       norm = planet.eps * a*M_PI*(planet.mp*params.mth)*(planet.mp*params.mth); 

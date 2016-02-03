@@ -160,7 +160,9 @@ class Sim(Parameters):
         self.vr = -self.mdot/self.lam
         self.vr0 = np.zeros(self.vr.shape)
         self.vr_ss = np.zeros(self.vr.shape)
+        self.lamp = np.zeros(self.lam.shape)
         for i in range(self.vr0.shape[1]):
+            self.lamp[:,i] = self.lam[:,i]/self.lam0
             self.vr0[:,i] = -self.mdot0[i]/self.lam0
             self.vr_ss[:,i] = -self.mdot_ss[i]/self.lam_ss[:,i]
         self.beta_reduc = self.vr_ss/self.vr0
