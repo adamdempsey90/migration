@@ -517,11 +517,42 @@ int in_region(double x, double a, double leftr, double rightr) {
         }
 }
 
-double dep_func(double x, double a, double w) {
+double dep_func(double x, double a, double xd, double w) {
+    double dist = x-a;
+/*
+    if (dist < 0) dist += xd*w;
+    else        dist -= xd*w;
+    dist *= dist;
+    return exp(- dist * 2*M_PI*M_PI/(w*w))/(w);
+*/
+    double leftr = (xd-.5)*w;
+    double rightr = (xd+.5)*w;
+        
+    double norm = 1./w;
+    double res = smoothing(x,a+leftr,params.h/2)*(1-smoothing(x,a+rightr,params.h/2));
+    res += smoothing(x,a-rightr,params.h/2)*(1-smoothing(x,a-leftr,params.h/2));
+    return norm*res;
 
-    return exp(- (x-a)*(x-a)/(2*w*w))/(w * sqrt(2*M_PI));
+
+
+
 }
 
+double dTr_kana(double x, double a) {
+    
+    double norm = planet.eps*.798*pow(planet.mp*params.mth,2)*pow(a,4);
+    double dist = x-a;
+
+    if (fabs(dist) < params.h*a*1.3) {
+        return 0;
+    }
+    else {
+        if (dist<0) norm *= -1;
+        return norm/(x*pow(fabs(x-a),4));
+    }
+
+
+}
 
 void set_weights( double *w,double *u,double a, int ia, int n) {
     int i;
@@ -529,8 +560,8 @@ void set_weights( double *w,double *u,double a, int ia, int n) {
     double hp = params.h * a;
     double xd = planet.xd;
 
-    double leftr = (xd-1)*hp/2;
-    double rightr = (xd+1)*hp/2;
+    double leftr = (xd-.5)*hp;
+    double rightr = (xd+.5)*hp;
 
     double normL,normR;
 
@@ -538,13 +569,13 @@ void set_weights( double *w,double *u,double a, int ia, int n) {
 //#pragma omp parallel for private(i) shared(a,rc,dr,ia)
    for(i=0;i<ia;i++) {
         
-        w[i] = dlr*dTr(rc[i],a);  // w lower
+        w[i] = dlr*dTr_kana(rc[i],a);  // w lower
         w[i+n] = 0;                       // w upper
 
 //        normL = 1/hp ? in_region(rmin[i],a,leftr,rightr) : 0; 
 //        normR = 1/hp ? in_region(rmin[i+1],a,leftr,rightr) : 0;
-        normL = dep_func(rmin[i],a,hp);
-        normR = dep_func(rmin[i+1],a,hp);
+        normL = dep_func(rmin[i],a,xd,hp);
+        normR = dep_func(rmin[i+1],a,xd,hp);
    
         if (i==0) {
             u[i+n] = -2*sqrt(rmin[i+1])*normR;
@@ -560,12 +591,12 @@ void set_weights( double *w,double *u,double a, int ia, int n) {
 
 //#pragma omp parallel for private(i) shared(a,rc,dr)
     for(i=ia;i<n;i++) { 
-        w[i+n] = dlr*dTr(rc[i],a);  // w upper
+        w[i+n] = dlr*dTr_kana(rc[i],a);  // w upper
         w[i] = 0;                           // w lower
 //        normL = 1/hp ? in_region(rmin[i],a,leftr,rightr) : 0; 
 //        normR = 1/hp ? in_region(rmin[i+1],a,leftr,rightr) : 0;
-        normL = dep_func(rmin[i],a,hp);
-        normR = dep_func(rmin[i+1],a,hp);
+        normL = dep_func(rmin[i],a,xd,hp);
+        normR = dep_func(rmin[i+1],a,xd,hp);
         if (i==n-1) {
             u[i+n*2] = 2*sqrt(rmin[i])*normL;
         }
@@ -630,13 +661,13 @@ void crank_nicholson_step_nl(double dt, double aplanet, double *y) {
     }
     else {
         set_weights(matrix.w,matrix.u,aplanet,matrix.icol,NR);
-       
+       /*
         fout=fopen("matrix_test.dat","w");
         for(i=0;i<NR;i++) {
-            fprintf(fout,"%lg\t%lg\t%lg\t%lg\t%lg\t%lg\t%lg\n",rc[i],y[i],matrix.w[i],matrix.w[i+NR],matrix.u[i+NR],matrix.u[i+NR*2],matrix.u[i]);
+            fprintf(fout,"%lg\t%lg\t%lg\t%lg\t%lg\t%lg\t%lg\n",rc[i],y[i],matrix.w[i],matrix.w[i+NR],matrix.u[i+NR],matrix.u[i+NR*2],dep_func(rmin[i],aplanet,planet.xd,params.h*aplanet));
         }
       fclose(fout);
-      
+      */
     }
 
 #pragma omp parallel for private(i,rm,rp,am,ap,bm,bp) shared(matrix,rc,rmin)
