@@ -18,11 +18,13 @@ class Parameters():
         ('bc_mdot',float),
         ('flux_bc',bool),
         ('dt',float),
+        ('cfl',float),
         ('nvisc',float),
         ('nt',int),
         ('release_time',float),
         ('read_initial_conditions',bool),
         ('planet_torque',bool),
+        ('explicit_stepper',bool),
         ('move_planet',bool),
         ('move_planet_implicit',bool),
         ('gaussian',bool),
@@ -125,7 +127,7 @@ class Sim(Parameters):
 
         self.vs_ss = ss['vs_ss'][:]
         self.eff = ss['eff'][:]
-        self.mdot0 = self.mdot_ss/self.eff
+ #       self.mdot0 = self.mdot_ss/self.eff
         f.close()
 #
 #        self.t = dat_p[:,0]
@@ -180,12 +182,12 @@ class Sim(Parameters):
                 self.vr0[:,i] = self.vr_nu(self.rc)/(1-np.sqrt(self.ri/self.rc))
                 #self.lam_ss[:,i] /= self.eff[i]
 
-            self.lam0 = -mdot/self.vr_nu(self.rc)
+         #   self.lam0 = -mdot/self.vr_nu(self.rc)
         else:
             for i in range(self.lam_ss.shape[1]):
                 self.vr0[:,i] = self.vr_nu(self.rc)/(1-np.sqrt(self.ri/self.rc))
                 self.lam_ss[:,i]  /= self.eff[i]
-            self.lam0 = -mdot/self.vr_nu(self.rc)
+         #   self.lam0 = -mdot/self.vr_nu(self.rc)
     def nu(self,x):
         return self.alpha*self.h*self.h * pow(x,self.gamma)
     def vr_nu(self,x):

@@ -86,7 +86,8 @@ int main(int argc, char *argv[]) {
     }
 
     printf("Viscous time is %.1e...\n", params.tvisc); 
-    printf("Starting Integration...\n");
+    printf("Starting Integration...\n"); 
+    printf("dt = %.3e\n",set_dt());
     double t = 0;
     for(i=0;i<nt;i++) {
         //printf("t = %.2f\n", fld.times[i]);
@@ -201,14 +202,42 @@ void free_field( Field *tmpfld) {
     return;
 }
 
+double set_dt(void) {
+    int i;
+    double dt1,dt2,dt3;
+    double dt_min=params.tvisc;
+    for(i=0;i<NR;i++) {
+        dt1 = dlr/(rc[i]*cs(rc[i]));
+        dt2 = dlr*dlr/nu(rc[i]);
+        if (dt1 < dt_min) {
+            dt_min = dt1;
+        }
+        if (dt2 < dt_min) {
+            dt_min = dt2;
+        }
+    }
+
+    return dt_min*params.cfl;
+}
+
+
 void advance_system(double dt, double *t, double tend) { 
 
     double dt2 = tend-(*t);
+
+    if (params.explicit_stepper) {
+        dt = set_dt();
+    }
 
     if (dt > dt2) {
         dt = dt2;
     }
  
+    if (params.explicit_stepper) {
+        explicit_step(dt,&planet.a,lam);
+        planet.vs = calc_drift_speed(planet.a,lam);
+    }
+    else {
     if ((params.move_planet) && (*t >= params.release_time)) {
 
         if (params.move_planet_implicit) {
@@ -234,6 +263,7 @@ void advance_system(double dt, double *t, double tend) {
             crank_nicholson_step(dt,planet.a,lam);
           }
         planet.vs = calc_drift_speed(planet.a,lam);
+    }
     }
     *t += dt;
 
@@ -421,6 +451,139 @@ void set_tau(double a) {
 }
 
 
+void explicit_step(double dt, double *aplanet, double *y) {
+/* TVD RK3 
+ */
+    int i;
+    double a1, a2;
+    double ap,am,bp,bm,rm,rp;
+    double *y1 = (double *)malloc(sizeof(double)*NR);
+    double *y2 = (double *)malloc(sizeof(double)*NR);
+    
+    a1 = *aplanet; a2 = *aplanet;
+
+#pragma omp parallel for private(i)
+    for(i=0;i<NR;i++) {
+        y1[i] = 0;
+        y2[i] = 0;
+    }
+
+#pragma omp parallel for private(i,rm,rp,am,ap,bm,bp) shared(rc,rmin,y,y1,dt)
+    for(i=0;i<NR;i++) {
+        if (i==0) {
+            am=0; bm=0;
+        }
+        else {
+            rm = rmin[i];
+            calc_coeffs(rm,rc[i]-rc[i-1],&am,&bm,*aplanet,params.planet_torque);
+        }
+        if (i!= NR-1) {
+            rp = rmin[i+1];
+            calc_coeffs(rp,rc[i+1]-rc[i],&ap,&bp,*aplanet,params.planet_torque);
+        }
+        else {
+            ap = 0; bp =0;
+        }
+        y1[i] = (ap-am-bm-bp)*y[i];
+        if (i!=0) {
+            y1[i] += (bm-am)*y[i-1];
+        }
+        else {
+            y1[i] -= params.bc_mdot;
+        }
+        if (i!=NR-1) {
+            y1[i] += (ap+bp)*y[i+1];
+        }
+        else {
+            y1[i] += params.bc_mdot;
+        }
+        y1[i] = y[i] + dt*y1[i]/dr[i];
+    }
+
+
+
+    if (params.move_planet) {
+        a1 = *aplanet + dt*calc_drift_speed(*aplanet,y);
+        
+    }
+
+#pragma omp parallel for private(i,rm,rp,am,ap,bm,bp) shared(rc,rmin,y,y2,dt)
+    for(i=0;i<NR;i++) {
+        if (i==0) {
+            am=0; bm=0;
+        }
+        else {
+            rm = rmin[i];
+            calc_coeffs(rm,rc[i]-rc[i-1],&am,&bm,*aplanet,params.planet_torque);
+        }
+        if (i!= NR-1) {
+            rp = rmin[i+1];
+            calc_coeffs(rp,rc[i+1]-rc[i],&ap,&bp,*aplanet,params.planet_torque);
+        }
+        else {
+            ap = 0; bp =0;
+        }
+
+        y2[i] = (ap-am-bm-bp)*y1[i];
+        if (i!=0) {
+            y2[i] += (bm-am)*y1[i-1];
+        }
+        else {
+            y2[i] -= params.bc_mdot;
+        }
+        if (i!=NR-1) {
+            y2[i] += (ap+bp)*y1[i+1];
+        }
+        else {
+            y2[i] += params.bc_mdot;
+        }
+        y2[i] = .75*y[i] + .25*y1[i] + .25*dt*y2[i]/dr[i];
+    }
+    if (params.move_planet) {
+        a2 = .75*(*aplanet) + .25*a1 + .25*dt*calc_drift_speed(a1,y1);
+    }
+
+#pragma omp parallel for private(i,rm,rp,am,ap,bm,bp) shared(rc,rmin,y,y1,y2,dt)
+    for(i=0;i<NR;i++) {
+        if (i==0) {
+            am=0; bm=0;
+        }
+        else {
+            rm = rmin[i];
+            calc_coeffs(rm,rc[i]-rc[i-1],&am,&bm,*aplanet,params.planet_torque);
+        }
+        if (i!= NR-1) {
+            rp = rmin[i+1];
+            calc_coeffs(rp,rc[i+1]-rc[i],&ap,&bp,*aplanet,params.planet_torque);
+        }
+        else {
+            ap = 0; bp =0;
+        }
+    
+        y[i] = (1./3)*y[i] + (2./3)*y2[i]; 
+        y[i] += (2./3)*dt*((ap-am-bm-bp)*y2[i])/dr[i];
+        
+        if (i != 0) {
+            y[i] += (2./3)*dt*(bm-am)*y2[i-1]/dr[i];
+        }
+        else {
+            y[i] -= (2./3)*dt*params.bc_mdot/dr[i];
+        }
+        if (i != NR-1) {
+            y[i] += (2./3)*dt*(ap+bp)*y2[i+1]/dr[i];
+        }
+        else {
+            y[i] += (2./3)*dt*params.bc_mdot/dr[i];
+        }
+    }
+    if (params.move_planet) {
+        *aplanet = (1./3)*(*aplanet) + (2./3)*a2 + (2./3)*dt*calc_drift_speed(a2,y2);
+    }
+    
+
+    free(y1); free(y2);
+    return;
+}
 
 
 void crank_nicholson_step(double dt, double aplanet, double *y) {
@@ -493,12 +656,17 @@ void crank_nicholson_step(double dt, double aplanet, double *y) {
         matrix.fm[0] = params.bc_lam[0];
     }
     else {
+        matrix.md[0] = 1;
+        matrix.ud[0] = 0;
+        matrix.fm[0] = params.bc_mdot*2*rc[0]/(3*nu(rc[0]));
 
+/*
         if (params.bc_lam[0] == 0) {
             matrix.md[0] = 1;
             matrix.ud[0] = 0;
             matrix.fm[0] = params.bc_lam[0];
         }
+*/
     }
     trisolve(matrix.ld,matrix.md,matrix.ud,matrix.fm,y,NR);
 
@@ -1035,7 +1203,8 @@ void init_lam(void) {
 
     if (params.flux_bc) {
         for(i=0;i<NR;i++) {
-            lam[i] = params.bc_mdot*2*rc[i]*(1 - sqrt(params.ri/rc[i]))/(3*nu(rc[i]));
+     //       lam[i] = params.bc_mdot*2*rc[i]*(1 - sqrt(params.ri/rc[i]))/(3*nu(rc[i]));
+            lam[i] = params.bc_mdot*2*rc[i]/(3*nu(rc[i]));
         }
     }
     else {
@@ -1133,7 +1302,7 @@ void set_grid(void) {
         rmin[i] = exp(lrmin[i]);
     }
    
-    
+    printf("Grid spacing is dlr = %.3e\n",dlr);    
 
     set_mdot(params.planet_torque);
     return;
@@ -1152,6 +1321,10 @@ void free_matrix(void) {
     free(matrix.md); free(matrix.ld); free(matrix.ud); free(matrix.fm);
     free(matrix.u); free(matrix.w);
     return;
+}
+double cs(double x) {
+    return params.h*pow(x,(2*params.gamma - 3.)/4.);
+
 }
 double nu(double x) {
 #ifdef NU
@@ -1235,7 +1408,7 @@ double dTr(double x,double a) {
 
         norm = planet.T0/(planet.delta * sqrt(M_PI));
 
-        res = norm*( (planet.G1+1)*right_fac - left_fac);
+        res = -norm*( (planet.G1+1)*right_fac - left_fac);
     }
    
     else {
@@ -1626,6 +1799,7 @@ void read_input_file(char *fname) {
     
     gchar=fgets(garbage,sizeof(garbage),f); //	Time Parameters:
     read_res=fscanf(f,"dt = %lg \n",&params.dt);
+    read_res=fscanf(f,"cfl = %lg \n",&params.cfl);
     read_res=fscanf(f,"nvisc = %lg \n",&params.nvisc);
     read_res=fscanf(f,"nt = %d \n",&params.nt);
     read_res=fscanf(f,"release_time = %lg \n",&params.release_time);
@@ -1636,6 +1810,8 @@ void read_input_file(char *fname) {
 
     read_res=fscanf(f,"planet_torque = %s \n",tmpstr);
     set_bool(tmpstr,&params.planet_torque);
+    read_res=fscanf(f,"explicit_stepper = %s \n",tmpstr);
+    set_bool(tmpstr,&params.explicit_stepper);
     read_res=fscanf(f,"move_planet = %s \n",tmpstr);
     set_bool(tmpstr,&params.move_planet);
     read_res=fscanf(f,"move_planet_implicit = %s \n",tmpstr);
@@ -1792,11 +1968,13 @@ void write_hdf5_params(hid_t *params_id) {
     out_par.bc_mdot = params.bc_mdot;
     out_par.flux_bc = params.flux_bc;
     out_par.dt= params.dt;
+    out_par.cfl = params.cfl;
     out_par.nvisc = params.nvisc;
     out_par.nt = params.nt;
     out_par.release_time = params.release_time;
     out_par.read_initial_conditions = params.read_initial_conditions;
     out_par.planet_torque = params.planet_torque;
+    out_par.explicit_stepper = params.explicit_stepper;
     out_par.move_planet = params.move_planet;
     out_par.move_planet_implicit = params.move_planet_implicit;
     out_par.gaussian = planet.gaussian;
@@ -1835,6 +2013,7 @@ void write_hdf5_params(hid_t *params_id) {
  HDF5_INSERT_ERROR(H5Tinsert (memtype, "flux_bc", HOFFSET (param_t, flux_bc), H5T_NATIVE_INT));
 
    HDF5_INSERT_ERROR(H5Tinsert (memtype, "dt", HOFFSET (param_t, dt), H5T_NATIVE_DOUBLE));
+   HDF5_INSERT_ERROR(H5Tinsert (memtype, "cfl", HOFFSET (param_t, cfl), H5T_NATIVE_DOUBLE));
 
    HDF5_INSERT_ERROR(H5Tinsert (memtype, "nvisc", HOFFSET (param_t, nvisc), H5T_NATIVE_DOUBLE));
 
@@ -1845,6 +2024,7 @@ void write_hdf5_params(hid_t *params_id) {
  HDF5_INSERT_ERROR(H5Tinsert (memtype, "read_initial_conditions", HOFFSET (param_t, read_initial_conditions), H5T_NATIVE_INT));
  
  HDF5_INSERT_ERROR(H5Tinsert (memtype, "planet_torque", HOFFSET (param_t, planet_torque), H5T_NATIVE_INT));
+ HDF5_INSERT_ERROR(H5Tinsert (memtype, "explicit_stepper", HOFFSET (param_t, explicit_stepper), H5T_NATIVE_INT));
  
  HDF5_INSERT_ERROR(H5Tinsert (memtype, "move_planet", HOFFSET (param_t, move_planet), H5T_NATIVE_INT));
  
