@@ -1414,7 +1414,6 @@ double dTr(double x,double a) {
     else {
         xi = (x-a) / scaleH(a);
 
-
  //       norm = planet.eps * a*M_PI*(planet.mp*params.mth)*(planet.mp*params.mth); 
         norm = planet.eps * (planet.mp*params.mth)*(planet.mp*params.mth);
         if (planet.symmetric_torque) {
