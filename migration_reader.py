@@ -121,6 +121,7 @@ class Sim(Parameters):
         except KeyError:
             print 'Could not find col entry in file'
 
+        self.lamnp = ss['lam0'][:].transpose()
         self.lam_ss = ss['lam_ss'][:].transpose()
         self.lamp = ss['lamp'][:].transpose()
         self.mdot_ss = ss['mdot_ss'][:]
@@ -140,6 +141,7 @@ class Sim(Parameters):
 #        self.rc = dat[0,1:]
 #        self.rm = dat[1,1:]
         self.mth = self.h**3
+        self.q = self.mp*self.mth
         self.disk_mass = np.dot(self.dr,self.lam0)
 #        self.dr = dat[2,1:]
         self.tvisc = self.ro**2/(self.nu(self.ro))
@@ -148,10 +150,11 @@ class Sim(Parameters):
 #        self.K = self.mp * self.h/self.alpha
 #        self.B = 2*self.at*(self.lamo-self.lami)/(self.mp*self.mth)
 #        self.Bfac = (np.sqrt(self.ro)-np.sqrt(self.ri))/(np.sqrt(self.at)-np.sqrt(self.ri))
+        self.A = self.lamp[-1,:]*np.sqrt(self.ro)
         self.K = self.eps*(self.mp*self.mth)**2/(self.alpha*self.h**5)
-        self.B = (4./3) * self.mdot_ss * self.at*(1-np.sqrt(self.ri/self.at))/(self.nu(self.at)*self.mp*self.mth)
-        self.Bfac = 1
-        self.freduc  = self.B * self.Bfac * (1 - self.eff)
+        self.B = 2 * self.at * self.bc_mdot/(-self.vr_nu(self.at))
+        self.B /= self.q
+        self.freduc = self.B * self.A/np.sqrt(self.at)
 #        self.dTr = dat[3,1:]
 #        self.lami = dat[4,0]
 #        self.lam0 = dat[4,1:]
@@ -162,9 +165,9 @@ class Sim(Parameters):
         self.vr = -self.mdot/self.lam
         self.vr0 = np.zeros(self.vr.shape)
         self.vr_ss = np.zeros(self.vr.shape)
-        self.lamp = np.zeros(self.lam.shape)
+#        self.lamp = np.zeros(self.lam.shape)
         for i in range(self.vr0.shape[1]):
-            self.lamp[:,i] = self.lam[:,i]/self.lam0
+#            self.lamp[:,i] = self.lam[:,i]/self.lam0
             self.vr0[:,i] = -self.mdot0[i]/self.lam0
             self.vr_ss[:,i] = -self.mdot_ss[i]/self.lam_ss[:,i]
         self.beta_reduc = self.vr_ss/self.vr0
@@ -179,7 +182,7 @@ class Sim(Parameters):
             mdot = self.bc_mdot
 
             for i in range(self.lam_ss.shape[1]):
-                self.vr0[:,i] = self.vr_nu(self.rc)/(1-np.sqrt(self.ri/self.rc))
+                self.vr0[:,i] = self.vr_nu(self.rc) #/(1-np.sqrt(self.ri/self.rc))
                 #self.lam_ss[:,i] /= self.eff[i]
 
          #   self.lam0 = -mdot/self.vr_nu(self.rc)
@@ -191,8 +194,8 @@ class Sim(Parameters):
     def nu(self,x):
         return self.alpha*self.h*self.h * pow(x,self.gamma)
     def vr_nu(self,x):
-        return -1.5 * self.nu(x)/x /(1 - np.sqrt(self.ri/x))
-
+#        return -1.5 * self.nu(x)/x /(1 - np.sqrt(self.ri/x))
+        return -1.5*self.nu(x)/x
     def animate(self,tend,skip,tstart=0,q='lam',logx = True,logy=True):
         fig=plt.figure()
         ax=fig.add_subplot(111)

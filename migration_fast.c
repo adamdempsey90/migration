@@ -62,12 +62,22 @@ int main(int argc, char *argv[]) {
     fld.mdot_ss[0] = fld_ss.mdot;
     fld.efficiency[0] = fld_ss.mdot/fld_ss.mdot0;
 
+    if (params.start_ss) {
+        for(i=0;i<NR;i++) {
+            lam[i] = fld_ss.lam[i];
+            mdot[i] = fld_ss.mdot;
+        }
+    }
+
 
     for(i=0;i<NR;i++) {
         fld.lami[i] = lam[i];
         fld.mdoti[i] = mdot[i];
         fld.sol_ss[i] = fld_ss.lam[i];
         fld.lamp[i] = fld_ss.lamp[i];
+        fld.lam0[i] = fld_ss.lam0[i];
+        fld.ivals_ss[i] = fld_ss.ivals[i];
+        fld.kvals_ss[i] = fld_ss.kvals[i];
     }
 
 
@@ -125,6 +135,9 @@ int main(int argc, char *argv[]) {
             }
             fld.sol_ss[j + NR*i] = fld_ss.lam[j];
             fld.lamp[j+NR*i] = fld_ss.lamp[j];
+            fld.lam0[j+NR*i] = fld_ss.lam0[j];
+            fld.ivals_ss[j + NR*i] = fld_ss.ivals[j];
+            fld.kvals_ss[j + NR*i] = fld_ss.kvals[j];
         }
     
     }
@@ -153,7 +166,11 @@ void allocate_field( Field *tmpfld) {
      MALLOC_SAFE( (tmpfld->mdot_ss =  (double *)malloc(sizeof(double)*params.nt)));
      MALLOC_SAFE( (tmpfld->vs_ss = (double *)malloc(sizeof(double)*params.nt)));
      MALLOC_SAFE( (tmpfld->sol_ss = (double *)malloc(sizeof(double)*NR*params.nt)));
+     MALLOC_SAFE( (tmpfld->ivals_ss = (double *)malloc(sizeof(double)*NR*params.nt)));
+     MALLOC_SAFE( (tmpfld->kvals_ss = (double *)malloc(sizeof(double)*NR*params.nt)));
+
     MALLOC_SAFE( (tmpfld->lamp = (double *)malloc(sizeof(double)*NR*params.nt)));
+    MALLOC_SAFE( (tmpfld->lam0 = (double *)malloc(sizeof(double)*NR*params.nt)));
      MALLOC_SAFE( (tmpfld->efficiency = (double *)malloc(sizeof(double)*params.nt)));
 
      MALLOC_SAFE( (tmpfld->nu_grid =  (double *)malloc(sizeof(double)*NR)));
@@ -177,7 +194,10 @@ void allocate_field( Field *tmpfld) {
         tmpfld->sol[i]= 0;
         tmpfld->sol_mdot[i]=0;
         tmpfld->lamp[i] = 0;
+        tmpfld->lam0[i] = 0;
         tmpfld->sol_ss[i] = 0;
+        tmpfld->ivals_ss[i] = 0;
+        tmpfld->kvals_ss[i] = 0;
 
     }
     return;
@@ -197,8 +217,12 @@ void free_field( Field *tmpfld) {
     free(tmpfld->vs_ss);
     free(tmpfld->sol_ss);
     free(tmpfld->lamp);
+    free(tmpfld->lam0);
     free(tmpfld->efficiency);
     free(tmpfld->nu_grid);
+    free(tmpfld->ivals_ss);
+    free(tmpfld->kvals_ss);
+
     return;
 }
 
@@ -1228,6 +1252,7 @@ void init_lam(void) {
     }
 #endif
 
+
     set_mdot(FALSE);
     return;
 }
@@ -1441,7 +1466,7 @@ double smoothing(double x, double x0, double w) {
 }
 
 
-double calc_drift_speed(double a, double *y) {
+double calc_total_torque(double a, double *y) {
     int i;
     double res = 0;
 
@@ -1461,18 +1486,33 @@ double calc_drift_speed(double a, double *y) {
     else {
         res += .5*(dTr(rc[0],a)*y[0] + dTr(rc[NR-1],a)*y[NR-1])/2;
     }
-    res *= -2*dlr*sqrt(a)/(planet.mp*params.mth);
+//    res *= -2*dlr*sqrt(a)/(planet.mp*params.mth);
 
-    return res;
+    return res*dlr;
 
 }
 
+double calc_drift_speed(double a,double *y) {
+    double T = calc_total_torque(a,y);
+    return -2*sqrt(a)*T/(planet.mp*params.mth);
+}
+
+
 void move_planet(double dt, double *y, double *vs, double *a) {
+    double T = calc_total_torque(*a,y);
+    double q = planet.mp*params.mth;
+
+    double L0 = sqrt(*a) * q;
+    double L1;
+    L1 = L0 - dt*T;
     
+    *vs = -2 * (*a) * T / L0;
+    *a = pow(L1/q,2);
+/*
     *vs = calc_drift_speed(*a,y);
     planet.a += dt*(*vs);
     *a += dt*(*vs);
-
+*/
     return;
 }
 
@@ -1802,6 +1842,8 @@ void read_input_file(char *fname) {
     read_res=fscanf(f,"nvisc = %lg \n",&params.nvisc);
     read_res=fscanf(f,"nt = %d \n",&params.nt);
     read_res=fscanf(f,"release_time = %lg \n",&params.release_time);
+    read_res=fscanf(f,"start_ss = %s \n",tmpstr);
+    set_bool(tmpstr,&params.start_ss);
     read_res=fscanf(f,"read_initial_conditions = %s \n",tmpstr);
     set_bool(tmpstr,&params.read_initial_conditions);
   
@@ -1928,9 +1970,12 @@ void write_hdf5_file(void) {
 // Steady State Solution
     write_hdf5_double(fld.sol_ss,dims2,2,steadystate_id,"lam_ss");
     write_hdf5_double(fld.lamp,dims2,2,steadystate_id,"lamp");
+    write_hdf5_double(fld.lam0,dims2,2,steadystate_id,"lam0");
     write_hdf5_double(fld.mdot_ss,dims1_t,1,steadystate_id,"mdot_ss");
     write_hdf5_double(fld.vs_ss,dims1_t,1,steadystate_id,"vs_ss");
     write_hdf5_double(fld.efficiency,dims1_t,1,steadystate_id,"eff");
+    write_hdf5_double(fld.ivals_ss,dims1_t,1,steadystate_id,"ivals_ss");
+    write_hdf5_double(fld.kvals_ss,dims1_t,1,steadystate_id,"kvals_ss");
 
     write_hdf5_params(&params_id);
 
@@ -1971,6 +2016,7 @@ void write_hdf5_params(hid_t *params_id) {
     out_par.nvisc = params.nvisc;
     out_par.nt = params.nt;
     out_par.release_time = params.release_time;
+    out_par.start_ss = params.start_ss;
     out_par.read_initial_conditions = params.read_initial_conditions;
     out_par.planet_torque = params.planet_torque;
     out_par.explicit_stepper = params.explicit_stepper;
@@ -2020,6 +2066,7 @@ void write_hdf5_params(hid_t *params_id) {
  
       HDF5_INSERT_ERROR(H5Tinsert (memtype, "release_time", HOFFSET (param_t, release_time), H5T_NATIVE_DOUBLE));
  
+ HDF5_INSERT_ERROR(H5Tinsert (memtype, "start_ss", HOFFSET (param_t, start_ss), H5T_NATIVE_INT));
  HDF5_INSERT_ERROR(H5Tinsert (memtype, "read_initial_conditions", HOFFSET (param_t, read_initial_conditions), H5T_NATIVE_INT));
  
  HDF5_INSERT_ERROR(H5Tinsert (memtype, "planet_torque", HOFFSET (param_t, planet_torque), H5T_NATIVE_INT));
@@ -2132,6 +2179,7 @@ void steadystate_config(SteadyStateField *tmpfld, double a) {
 #pragma omp parallel for private(i)
         for(i=0;i<NR;i++) {
          tmpfld->lam[i] =  (tmpfld->mdot * tmpfld->kvals[i])/tmpfld->ivals[i];
+         tmpfld->lam[i] += tmpfld->mdot * sqrt(params.ri)/tmpfld->ivals[i];
          tmpfld->lam[i] *= 2*sqrt(rc[i])/(3*nu(rc[i]));
 
          }
@@ -2163,9 +2211,9 @@ void steadystate_config(SteadyStateField *tmpfld, double a) {
 #pragma omp parallel for private(i)
     for(i=0;i<NR;i++) {
         
-        tmpfld->lam0[i] = (tmpfld->mdot0) * 2*rc[i] *( 1- sqrt(params.ri/rc[i]))/(3*nu(rc[i]));
-//        tmpfld->lam0[i] += params.bc_lam[0] /pow(rc[i]/params.ri,params.gamma-.5);
-       
+        tmpfld->lam0[i] = params.bc_mdot*2*rc[i]/(3*nu(rc[i])); 
+            //        tmpfld->lam0[i] += params.bc_lam[0] /pow(rc[i]/params.ri,params.gamma-.5);
+     
         if (tmpfld->lam0[i] == 0) {
             tmpfld->lamp[i] = 0;
         }
@@ -2174,10 +2222,8 @@ void steadystate_config(SteadyStateField *tmpfld, double a) {
         }
 
     }
-
-    tmpfld->vs = tmpfld->lamp[NR-1];
-    tmpfld->vs *= -2*sqrt(planet.a) * params.bc_mdot * (sqrt(rc[NR-1])-sqrt(params.ri));
-    tmpfld->vs /= (planet.mp*params.mth);
+    tmpfld->vs = tmpfld->lamp[NR-1]*sqrt(rc[NR-1]);
+    tmpfld->vs *= -params.bc_mdot * 2*sqrt(a)/(planet.mp*params.mth);
     return;
 
 }
