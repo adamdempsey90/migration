@@ -15,7 +15,7 @@ bc_mdot = 0.0000001
 flux_bc = T 
 
 #Time Parameters:
-dt = 1000.0
+dt = 100.0
 cfl = 0.8
 nvisc = 1.0
 nt = 100
@@ -36,7 +36,7 @@ shock_dep = F
 hs_visc = F
 one_sided = 0
 a  = 5.2
-mp = 1.0
+mp = 3.0
 G1 = 0.0
 beta = 0.66666667
 delta = 0.05

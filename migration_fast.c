@@ -42,7 +42,6 @@ int main(int argc, char *argv[]) {
 //    double t_end = params.nvisc * params.tvisc;
     double dt = params.dt;
     int nt = params.nt;
-    fld.avals[0] = planet.a; fld.vs[0] = planet.vs;
 
     for(i=0;i<NR*nt;i++) {
         fld.sol[i] = 0;
@@ -66,6 +65,8 @@ int main(int argc, char *argv[]) {
         for(i=0;i<NR;i++) {
             lam[i] = fld_ss.lam[i];
             mdot[i] = fld_ss.mdot;
+            fld.sol[i] = lam[i];
+            fld.sol_mdot[i] = mdot[i];
         }
     }
 
@@ -90,21 +91,28 @@ int main(int argc, char *argv[]) {
             fld.torque[i] = dTr(rc[i],planet.a);
         }
     }
-
-    for(i=0;i<nt;i++) {
-        fld.times[i] = pow(10,i * log10(params.nvisc*params.tvisc) /((double) nt));
+    planet.vs = calc_drift_speed(planet.a,lam);
+    fld.avals[0] = planet.a; 
+    fld.vs[0] = planet.vs;
+    fld.times[0] = 0;
+    for(i=0;i<nt-1;i++) {
+        fld.times[i+1] = pow(10,i * log10(params.nvisc*params.tvisc) /((double) (nt-1)));
     }
 
     printf("Viscous time is %.1e...\n", params.tvisc); 
     printf("Starting Integration...\n"); 
     printf("dt = %.3e\n",set_dt());
     double t = 0;
-    for(i=0;i<nt;i++) {
+    int planet_has_left = FALSE;
+    for(i=1;i<nt;i++) {
         //printf("t = %.2f\n", fld.times[i]);
         while (t < fld.times[i]) {
             advance_system(dt, &t, fld.times[i]);
             if ((planet.a > params.ro) || (planet.a < params.ri)) {
-                printf("\nPlanet has left the domain!\n");
+                if (!planet_has_left) {
+                    printf("\nPlanet has left the domain!\n");
+                    planet_has_left= TRUE;
+                }
             }
         }
         printf("\r t = %.2e = %.2e tvisc\t%02d%% complete...", t,t/params.tvisc,(int)(100* i/((float)nt)));
@@ -362,7 +370,7 @@ void calc_coeffs(double x, double dx,double *a, double *b,double rp,int planet_t
     if (planet_torque == TRUE) {
         *a -= dTr(x,rp)/( sqrt(x));
     }
-    *a /= 2;
+//    *a /= 2;
     return;
 }
 
@@ -1308,6 +1316,7 @@ void set_grid(void) {
 
     MALLOC_SAFE(( taumin =  (double *)malloc(sizeof(double)*NR)));
     MALLOC_SAFE(( tauc =  (double *)malloc(sizeof(double)*NR)));
+    MALLOC_SAFE(( weights =  (double *)malloc(sizeof(double)*NR)));
 
     int set_flag = TRUE;
     int i;
@@ -1319,7 +1328,9 @@ void set_grid(void) {
         lam[i] = 0;
         taumin[i] = 0;
         tauc[i] = 0;
+        weights[i] = 1;
     }
+    weights[0] = 0.5; weights[NR-1] = 0.5;
     lrmin[0] = (log(params.ri) - dlr + lrc[0])*.5;
     rmin[0] = exp(lrmin[0]);//.5*(rc[0] + exp(log(params.ri)-dlr));
     for(i=1;i<NR;i++) {
@@ -1339,6 +1350,7 @@ void free_grid(void) {
     free(lrc); free(lrmin);
     free(mdot); free(taumin);
     free(tauc);
+    free(weights);
      return;
 }
 
@@ -1440,7 +1452,7 @@ double dTr(double x,double a) {
         xi = (x-a) / scaleH(a);
 
  //       norm = planet.eps * a*M_PI*(planet.mp*params.mth)*(planet.mp*params.mth); 
-        norm = planet.eps * (planet.mp*params.mth)*(planet.mp*params.mth);
+        norm = planet.eps * (planet.mp*params.mth)*(planet.mp*params.mth)/2.;
         if (planet.symmetric_torque) {
             right_fac = norm*pow(a/fmax(scaleH(x),fabs(x-a)),4);
         }
@@ -1471,20 +1483,14 @@ double calc_total_torque(double a, double *y) {
     double res = 0;
 
 #pragma omp parallel for private(i) reduction(+:res) 
-    for(i=1;i<NR-1;i++) {
+    for(i=0;i<NR;i++) {
         if (params.nonlocal_torque) {
-            res += dTr_nl(rc[i],i,a,TRUE)*y[i]/2;  // Factor of 1/2 from torque normalization
+            res += weights[i]*dTr_nl(rc[i],i,a,TRUE)*y[i];  // Factor of 1/2 from torque normalization
 
         }
         else {
-            res += dTr(rc[i],a)*y[i]/2;  // Factor of 1/2 from torque normalization
+            res += weights[i]*dTr(rc[i],a)*y[i];  // Factor of 1/2 from torque normalization
         }
-    }
-    if (params.nonlocal_torque) {
-        res += .5*(dTr_nl(rc[0],0,a,TRUE)*y[0] + dTr_nl(rc[NR-1],NR-1,a,TRUE)*y[NR-1])/2;
-    }
-    else {
-        res += .5*(dTr(rc[0],a)*y[0] + dTr(rc[NR-1],a)*y[NR-1])/2;
     }
 //    res *= -2*dlr*sqrt(a)/(planet.mp*params.mth);
 
@@ -1519,22 +1525,30 @@ void move_planet(double dt, double *y, double *vs, double *a) {
 void set_mdot(int planet_torque) {
     int i;
     double ca, cb;
-    
+
+
     for(i=0;i<NR;i++) {
         ca = 3*nu(rc[i])/rc[i];
         cb = ca*(params.gamma - .5);
 
-        if (planet_torque == TRUE) {
+        if (planet_torque) {
             if (params.nonlocal_torque) {
                 cb -= 2*sqrt(rc[i])*dTr_nl(rc[i],i,planet.a,TRUE);
             }
             else {
-                cb -= dTr(rc[i],planet.a)/(sqrt(rc[i]));
+                cb -= 2*dTr(rc[i],planet.a)/(sqrt(rc[i]));
             }
         }  
+        
         mdot[i] = cb*lam[i]; 
+        //printf("%d\t%.2e\n",i,mdot[i]/params.bc_mdot);
         if (i == 0){ 
-            mdot[i] += ca*(lam[i+1]-params.bc_lam[0])/(dlr);
+            if (params.flux_bc) {
+                mdot[i] = params.bc_mdot;
+            }
+            else {
+                mdot[i] += ca*(lam[i+1]-params.bc_lam[0])/(dlr);
+            }
         }
         else {
             if (i==NR-1) {
@@ -1974,8 +1988,8 @@ void write_hdf5_file(void) {
     write_hdf5_double(fld.mdot_ss,dims1_t,1,steadystate_id,"mdot_ss");
     write_hdf5_double(fld.vs_ss,dims1_t,1,steadystate_id,"vs_ss");
     write_hdf5_double(fld.efficiency,dims1_t,1,steadystate_id,"eff");
-    write_hdf5_double(fld.ivals_ss,dims1_t,1,steadystate_id,"ivals_ss");
-    write_hdf5_double(fld.kvals_ss,dims1_t,1,steadystate_id,"kvals_ss");
+    write_hdf5_double(fld.ivals_ss,dims2,2,steadystate_id,"ivals_ss");
+    write_hdf5_double(fld.kvals_ss,dims2,2,steadystate_id,"kvals_ss");
 
     write_hdf5_params(&params_id);
 
@@ -2136,22 +2150,29 @@ void free_steady_state_field(SteadyStateField *tmpfld) {
 }
 void steadystate_config(SteadyStateField *tmpfld, double a) {
     int i;
-    double res;
+    double res,resp;
 
     tmpfld->a = a;
 
 
-
     tmpfld->ivals[0] = 0;
+    if (params.nonlocal_torque) {
+        resp = -2*dlr*dTr_nl(rc[0],0,a,TRUE)*rc[0]*sqrt(rc[0])/(3*nu(rc[0]));
+
+    }
+    else {
+        resp = -2*dlr*dTr(rc[0],a)*sqrt(rc[0])/(3*nu(rc[0]));
+    }
     for(i=1;i<NR;i++) {
         if (params.nonlocal_torque) {
-            res = -dlr*dTr_nl(rc[i],i,a,TRUE)*rc[i]*sqrt(rc[i])/(3*nu(rc[i]));
+            res = -2*dlr*dTr_nl(rc[i],i,a,TRUE)*rc[i]*sqrt(rc[i])/(3*nu(rc[i]));
 
         }
         else {
-            res = -dlr*dTr(rc[i],a)*sqrt(rc[i])/(3*nu(rc[i]));
+            res = -2*dlr*dTr(rc[i],a)*sqrt(rc[i])/(3*nu(rc[i]));
         }
-        tmpfld->ivals[i] = tmpfld->ivals[i-1] + res;
+        tmpfld->ivals[i] = tmpfld->ivals[i-1] + .5*(res+resp);
+        resp = res;
     }
 
 #pragma omp parallel for private(i)
@@ -2161,10 +2182,12 @@ void steadystate_config(SteadyStateField *tmpfld, double a) {
 
 
     tmpfld->kvals[0] = 0;
+    resp = dlr * (tmpfld->ivals[0])*sqrt(rc[0])/2;
     for(i=1;i<NR;i++) {
 //        res = dr[i]*tmpfld->ivals[i]/(3*nu(rc[i]));
         res = dlr * (tmpfld->ivals[i])*sqrt(rc[i])/2;
-        tmpfld->kvals[i] = tmpfld->kvals[i-1] + res;
+        tmpfld->kvals[i] = tmpfld->kvals[i-1] + .5*(res+resp);
+        resp = res;
     }
 
     if (params.flux_bc) {
@@ -2173,15 +2196,20 @@ void steadystate_config(SteadyStateField *tmpfld, double a) {
     else {
         tmpfld->mdot = (params.bc_lam[1]*tmpfld->ivals[NR-1] - params.bc_lam[0])/tmpfld->kvals[NR-1];
     }
-
+    for(i=0;i<NR;i++) {
+        tmpfld->lam0[i] = params.bc_mdot*2*rc[i]/(3*nu(rc[i])); 
+    }
     if (params.flux_bc) {
         
 #pragma omp parallel for private(i)
         for(i=0;i<NR;i++) {
+         tmpfld->lam[i] = (1 + tmpfld->kvals[i]/sqrt(params.ri))/(tmpfld->ivals[i]);
+         tmpfld->lam[i] *= tmpfld->lam0[i]*sqrt(params.ri/rc[i]);
+/*
          tmpfld->lam[i] =  (tmpfld->mdot * tmpfld->kvals[i])/tmpfld->ivals[i];
          tmpfld->lam[i] += tmpfld->mdot * sqrt(params.ri)/tmpfld->ivals[i];
          tmpfld->lam[i] *= 2*sqrt(rc[i])/(3*nu(rc[i]));
-
+*/
          }
     }
     else {
@@ -2211,7 +2239,6 @@ void steadystate_config(SteadyStateField *tmpfld, double a) {
 #pragma omp parallel for private(i)
     for(i=0;i<NR;i++) {
         
-        tmpfld->lam0[i] = params.bc_mdot*2*rc[i]/(3*nu(rc[i])); 
             //        tmpfld->lam0[i] += params.bc_lam[0] /pow(rc[i]/params.ri,params.gamma-.5);
      
         if (tmpfld->lam0[i] == 0) {

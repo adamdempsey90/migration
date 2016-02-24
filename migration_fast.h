@@ -139,6 +139,7 @@ double *rc, *rmin, *lam, *dr;
 double *taumin, *tauc;
 double *lrc, *lrmin;
 double *mass, *ones, *mdot;
+double *weights;
 double dlr;
 Parameters params;
 Planet planet; 

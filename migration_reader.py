@@ -22,6 +22,7 @@ class Parameters():
         ('nvisc',float),
         ('nt',int),
         ('release_time',float),
+        ('start_ss',bool),
         ('read_initial_conditions',bool),
         ('planet_torque',bool),
         ('explicit_stepper',bool),
@@ -125,6 +126,8 @@ class Sim(Parameters):
         self.lam_ss = ss['lam_ss'][:].transpose()
         self.lamp = ss['lamp'][:].transpose()
         self.mdot_ss = ss['mdot_ss'][:]
+        self.ivals_ss = ss['ivals_ss'][:].transpose()
+        self.kvals_ss = ss['kvals_ss'][:].transpose()
 
         self.vs_ss = ss['vs_ss'][:]
         self.eff = ss['eff'][:]
@@ -150,7 +153,13 @@ class Sim(Parameters):
 #        self.K = self.mp * self.h/self.alpha
 #        self.B = 2*self.at*(self.lamo-self.lami)/(self.mp*self.mth)
 #        self.Bfac = (np.sqrt(self.ro)-np.sqrt(self.ri))/(np.sqrt(self.at)-np.sqrt(self.ri))
-        self.A = self.lamp[-1,:]*np.sqrt(self.ro)
+        self.Ap = self.lamp[-1,:]*np.sqrt(self.ro)
+
+        self.A = (self.torque*self.lam)
+        for i in range(self.lam.shape[1]):
+            self.A[:,i] *= self.dlr/self.bc_mdot
+        self.A = np.trapz(self.A,axis=0)
+
         self.K = self.eps*(self.mp*self.mth)**2/(self.alpha*self.h**5)
         self.B = 2 * self.at * self.bc_mdot/(-self.vr_nu(self.at))
         self.B /= self.q
@@ -217,7 +226,7 @@ class Sim(Parameters):
             line, = ax.plot(self.rc,self.mdot0/self.mdot0)
             linep, = ax.plot(self.at[0],1,'o',markersize=10)
 
-            ax.axhline(1,color='k',linestyle='--')
+            #ax.axhline(1,color='k',linestyle='--')
             dat = self.mdot[:,inds]
             dat = dat[:,::skip]
             for i in range(dat.shape[1]):
@@ -233,8 +242,9 @@ class Sim(Parameters):
             ax.set_ylabel('$ \\Sigma(r)$',fontsize=20)
             line, = ax.plot(self.rc,self.lam0/fac)
             linep, = ax.plot(self.at[0],(self.lam0/fac)[self.rc>=self.at[0]][0],'o',markersize=10)
-            ax.plot(self.rc,self.lam_ss[:,-1]/fac,'--r')
+            liness,=ax.plot(self.rc,self.lam_ss[:,0]/fac,'--r')
             ax.plot(self.rc,self.lam0/fac,'--k')
+            ax.plot(self.rc,self.lamnp[:,0]/fac,'-k')
             dat = self.lam[:,inds]
             dat = dat[:,::skip]
             for i in range(dat.shape[1]):
@@ -242,6 +252,14 @@ class Sim(Parameters):
 
             if logy:
                 ax.set_yscale('log')
+        elif q == 'lamp':
+            ax.set_ylabel('$ \\Sigma/\\Sigma_0$',fontsize=20)
+            line,=  ax.plot(self.rc,self.lamp[:,0]+1)
+            linep, = ax.plot(self.at[0],(self.lamp[:,0]+1)[self.rc>=self.at[0]][0],'o',markersize=10)
+            liness, = ax.plot(self.rc,self.lam_ss[:,0]/self.lamnp[:,0],'--r')
+            ax.plot(self.rc,self.lamp[:,0]+1,'--k')
+            dat = self.lamp[:,inds][:,::skip] + 1
+
         else:
             print  'q=%s is not a valid option' % q
             return
@@ -258,25 +276,29 @@ class Sim(Parameters):
             line.set_ydata(dat[:,i])
             linep.set_xdata(avals[i])
             linep.set_ydata(dat[:,i][self.rc>=avals[i]][0])
+            if q == 'sigma':
+                liness.set_ydata(self.lam_ss[:,inds][:,::skip][:,i]/fac)
             ax.set_title('t = %.2e viscous times' % (t/self.tvisc))
             fig.canvas.draw()
 
     def time_series(self,axes=None,fig=None,scale=True):
         if fig == None:
-            fig,axes = plt.subplots(2,2,sharex='col')
+            fig,axes = plt.subplots(2,3,sharex='col')
         fig.subplots_adjust(hspace=0)
         axes[0,0].semilogx(self.t,self.at,'.-')
 
         if scale:
             dat = self.vs / (-1.5*self.nu(self.at)/self.at)
+            vlabel = '$\\dot{a}/v_r^{visc}$'
         else:
             dat = self.vs
+            vlabel = '$\\dot{a}$'
 
         axes[1,0].semilogx(self.t,dat,'.-')
 
         axes[1,0].set_yscale('log')
         axes[0,0].set_ylabel('$a$',fontsize=20)
-        axes[1,0].set_ylabel('$\\dot{a}$',fontsize=20)
+        axes[1,0].set_ylabel(vlabel,fontsize=20)
         axes[1,0].set_xlabel('$t$',fontsize=20)
 
         if (self.at >= self.rc[-1]).any():
@@ -285,18 +307,70 @@ class Sim(Parameters):
             axes[0,0].axhline(self.rc[0],color='k')
 
         axes[1,1].plot(self.at,dat,'.-')
+        axes[1,2].plot(self.B,dat,'.-')
         axes[1,1].set_xlabel('$a$',fontsize=20)
-        axes[1,1].set_ylabel('$\\dot{a}$',fontsize=20)
+        axes[1,1].set_ylabel(vlabel,fontsize=20)
         if scale:
             axes[1,1].set_yscale('log')
-            axes[1,1].plot(self.at,self.vs_ss/self.vr_nu(self.at),'+r') #self.freduc,'+r')
+            axes[1,2].set_yscale('log')
+            axes[1,1].plot(self.at,self.freduc,'+r',label='steady state pred.') #self.freduc,'+r')
+            axes[1,2].plot(self.B,self.freduc,'+r')
         else:
-            axes[1,1].plot(self.at,self.vs_ss,'+r') #self.freduc*self.vr_nu(self.at),'+r')
+            axes[1,1].plot(self.at,self.vs_ss,'+r',label='steady state pred.') #self.freduc*self.vr_nu(self.at),'+r')
+            axes[1,2].plot(self.B,self.vs_ss,'+r')
 
-        axes[0,1].plot(self.at,1-self.eff,'.-',label='f_mdot')
-        axes[0,1].plot(self.at,self.B,'.-',label='Mdisk/Mplanet')
+        axes[1,1].legend(loc='best')
+        axes[0,1].plot(self.at,self.A,'.-',label='A')
+        axes[0,1].plot(self.at,self.B,'.-',label='B')
         axes[0,1].legend(loc='best')
         axes[0,1].set_yscale('log')
+
+
+        axes[0,2].plot(self.B,self.A,'.-')
+        axes[1,2].set_xlabel('$B$',fontsize=20)
+        axes[0,2].set_ylabel('$A$',fontsize=20)
+
+
+        add_line = lambda ax,val,orient,c,w: ax.axhline(val,color=c,linewidth=w) if orient == 'y' else ax.axvline(val,color=c,linewidth=w)
+
+
+        lowx, highx = axes[0,0].get_xlim()
+        lowy, highy = axes[0,0].get_ylim()
+        if lowy <= self.ri <= highy:
+            add_line(axes[0,0],self.ri,'y','k',2)
+
+        lowx, highx = axes[0,1].get_xlim()
+        lowy, highy = axes[0,1].get_ylim()
+        if lowy <= 1 <= highy:
+            add_line(axes[0,1],1,'y','k',2)
+        if lowx <= self.ri <= highx:
+            add_line(axes[0,1],self.ri,'x','k',2)
+
+        lowx, highx = axes[1,0].get_xlim()
+        lowy, highy = axes[1,0].get_ylim()
+        if lowy <= self.ri <= highy:
+            add_line(axes[1,0],1,'y','k',2)
+
+        lowx, highx = axes[1,1].get_xlim()
+        lowy, highy = axes[1,1].get_ylim()
+        if lowy <= 1 <= highy:
+            add_line(axes[1,1],1,'y','k',2)
+        if lowx <= self.ri <= highx:
+            add_line(axes[1,1],self.ri,'x','k',2)
+
+        lowx, highx = axes[1,2].get_xlim()
+        lowy, highy = axes[1,2].get_ylim()
+        if lowy <= self.ri <= highy:
+            add_line(axes[1,2],self.ri,'y','k',2)
+
+        lowx, highx = axes[0,2].get_xlim()
+        lowy, highy = axes[0,2].get_ylim()
+        if lowy <= self.ri <= highy:
+            add_line(axes[0,2],self.ri,'y','k',2)
+
+        for ax in axes.flatten():
+            ax.minorticks_on()
+            ax.grid()
 
         fig.canvas.draw()
         return axes,fig
@@ -319,3 +393,6 @@ class Sim(Parameters):
         self.ss_dTr = dat[:,3]
         self.ss_mdot = -dat[10,1]*dat[10,2]
 
+def plaw(x,a,b):
+    return a*x**b
+execfile('viridis/viridis.py')
