@@ -440,4 +440,3 @@ class Sim(Parameters):
 
 def plaw(x,a,b):
     return a*x**b
-execfile('viridis/viridis.py')
