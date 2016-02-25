@@ -254,7 +254,7 @@ double set_dt(void) {
 
 
 void advance_system(double dt, double *t, double tend) { 
-
+    double newa, newv;
     double dt2 = tend-(*t);
 
     if (params.explicit_stepper) {
@@ -264,7 +264,23 @@ void advance_system(double dt, double *t, double tend) {
     if (dt > dt2) {
         dt = dt2;
     }
- 
+
+    newa = planet.a;
+    newv = planet.vs;
+
+    
+    if ((params.move_planet) && (*t >= params.release_time)) {
+        move_planet(dt,lam,&newv,&newa);
+    }
+
+    crank_nicholson_step(dt,planet.a,lam);
+
+
+    if ((params.move_planet) && (*t >= params.release_time)) {
+        planet.a = newa;
+        planet.vs = calc_drift_speed(planet.a,lam);
+    }
+ /*
     if (params.explicit_stepper) {
         explicit_step(dt,&planet.a,lam);
         planet.vs = calc_drift_speed(planet.a,lam);
@@ -297,6 +313,7 @@ void advance_system(double dt, double *t, double tend) {
         planet.vs = calc_drift_speed(planet.a,lam);
     }
     }
+*/
     *t += dt;
 
     return;
@@ -648,11 +665,13 @@ void crank_nicholson_step(double dt, double aplanet, double *y) {
     if (params.flux_bc) {
         calc_coeffs(rmin[NR-1],rc[NR-1]-rc[NR-2],&am,&bm,aplanet,params.planet_torque);
         calc_coeffs(rmin[1],rc[1]-rc[0],&ap,&bp,aplanet,params.planet_torque);
-        matrix.md[0] = (ap-bp)*dt/2.;
-        matrix.ud[0] = (ap+bp)*dt/2.;
+ //       matrix.md[0] = (ap-bp)*dt/2.;
+ //       matrix.ud[0] = (ap+bp)*dt/2.;
+        matrix.md[0] = 0; matrix.ud[0] = 0;
         matrix.md[NR-1] = (-am-bm)*dt/2.;
         matrix.ld[NR-2] = (-am+bm)*dt/2.;
-        matrix.fm[0] = -params.bc_mdot*dt;
+ //       matrix.fm[0] = -params.bc_mdot*dt;
+        matrix.fm[0] = 0;
         matrix.fm[NR-1] = params.bc_mdot*dt;
     }
 
@@ -688,9 +707,9 @@ void crank_nicholson_step(double dt, double aplanet, double *y) {
         matrix.fm[0] = params.bc_lam[0];
     }
     else {
-        matrix.md[0] = 1;
+    //    matrix.md[0] = 0; //1;
         matrix.ud[0] = 0;
-        matrix.fm[0] = params.bc_mdot*2*rc[0]/(3*nu(rc[0]));
+    //    matrix.fm[0] = 0; //params.bc_mdot*2*rc[0]/(3*nu(rc[0]));
 
 /*
         if (params.bc_lam[0] == 0) {
@@ -1545,6 +1564,7 @@ void set_mdot(int planet_torque) {
         if (i == 0){ 
             if (params.flux_bc) {
                 mdot[i] = params.bc_mdot;
+                mdot[i] = mdot[1];
             }
             else {
                 mdot[i] += ca*(lam[i+1]-params.bc_lam[0])/(dlr);

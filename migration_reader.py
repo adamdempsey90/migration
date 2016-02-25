@@ -148,13 +148,14 @@ class Sim(Parameters):
         self.disk_mass = np.dot(self.dr,self.lam0)
 #        self.dr = dat[2,1:]
         self.tvisc = self.ro**2/(self.nu(self.ro))
+        self.tviscp = self.at**2/(self.nu(self.at))
         self.lami = self.bc_lam_inner
         self.lamo = self.bc_lam_outer
 #        self.K = self.mp * self.h/self.alpha
 #        self.B = 2*self.at*(self.lamo-self.lami)/(self.mp*self.mth)
 #        self.Bfac = (np.sqrt(self.ro)-np.sqrt(self.ri))/(np.sqrt(self.at)-np.sqrt(self.ri))
         self.Ap = self.lamp[-1,:]*np.sqrt(self.ro)
-
+        self.vp_visc = -1.5*self.nu(self.at)/self.at
         self.A = (self.torque*self.lam)
         for i in range(self.lam.shape[1]):
             self.A[:,i] *= self.dlr/self.bc_mdot
@@ -163,7 +164,9 @@ class Sim(Parameters):
         self.K = self.eps*(self.mp*self.mth)**2/(self.alpha*self.h**5)
         self.B = 2 * self.at * self.bc_mdot/(-self.vr_nu(self.at))
         self.B /= self.q
-        self.freduc = self.B * self.A/np.sqrt(self.at)
+        self.freduc = self.B * self.Ap/np.sqrt(self.at)
+
+
 #        self.dTr = dat[3,1:]
 #        self.lami = dat[4,0]
 #        self.lam0 = dat[4,1:]
@@ -205,6 +208,19 @@ class Sim(Parameters):
     def vr_nu(self,x):
 #        return -1.5 * self.nu(x)/x /(1 - np.sqrt(self.ri/x))
         return -1.5*self.nu(x)/x
+    def grad(self,q,axis=0):
+        res = np.zeros(q.shape)
+
+        if axis == 0:
+            res[1:-1,:] = (q[2:,:] - q[:-2,:])/(self.rc[2:]-self.rc[:-2])[:,np.newaxis]
+            res[0,:] = (q[1,:]-q[0,:])/(self.rc[1]-self.rc[0])
+            res[-1,:] = (q[-1,:]-q[-2,:])/(self.rc[-1]-self.rc[-2])
+        elif axis == 1:
+            res[:,1:-1] = (q[:,2:] - q[:,:-2])/(self.rc[2:]-self.rc[:-2])[:,np.newaxis]
+            res[:,0] = (q[:,1]-q[:,0])/(self.rc[1]-self.rc[0])
+            res[:,-1] = (q[:,-1]-q[:,-2])/(self.rc[-1]-self.rc[-2])
+        return res
+
     def animate(self,tend,skip,tstart=0,q='lam',logx = True,logy=True):
         fig=plt.figure()
         ax=fig.add_subplot(111)
@@ -260,6 +276,28 @@ class Sim(Parameters):
             ax.plot(self.rc,self.lamp[:,0]+1,'--k')
             dat = self.lamp[:,inds][:,::skip] + 1
 
+        elif q == 'mass':
+            ax.set_ylabel('Ring Mass',fontsize=15)
+            line, = ax.plot(self.rc,self.lam0*self.dr)
+            linep, = ax.plot(self.at[0],(self.lam0*self.dr)[self.rc>=self.at[0]][0],'o',markersize=10)
+            liness,=ax.plot(self.rc,self.lam_ss[:,0]*self.dr,'--r')
+            ax.plot(self.rc,self.lam_ss[:,-1]*self.dr,'--r')
+            ax.plot(self.rc,self.lam0*self.dr,'--k')
+            dat = self.lam[:,inds]*self.dr[:,np.newaxis]
+            dat = dat[:,::skip]
+            if logy:
+                ax.set_yscale('log')
+        elif q == 'cmass':
+            ax.set_ylabel('Cumulative Interior Mass',fontsize=15)
+            line, = ax.plot(self.rc,np.cumsum(self.lam0*self.dr))
+            linep, = ax.plot(self.at[0],np.cumsum(self.lam0*self.dr)[self.rc>=self.at[0]][0],'o',markersize=10)
+            liness,=ax.plot(self.rc,np.cumsum(self.lam_ss[:,0]*self.dr),'--r')
+            ax.plot(self.rc,np.cumsum(self.lam_ss[:,-1]*self.dr),'--r')
+            ax.plot(self.rc,np.cumsum(self.lam0*self.dr),'--k')
+            dat = np.cumsum(self.lam[:,inds]*self.dr[:,np.newaxis],axis=0)
+            dat = dat[:,::skip]
+            if logy:
+                ax.set_yscale('log')
         else:
             print  'q=%s is not a valid option' % q
             return
@@ -278,6 +316,10 @@ class Sim(Parameters):
             linep.set_ydata(dat[:,i][self.rc>=avals[i]][0])
             if q == 'sigma':
                 liness.set_ydata(self.lam_ss[:,inds][:,::skip][:,i]/fac)
+            if q == 'mass':
+                liness.set_ydata(self.lam_ss[:,inds][:,::skip][:,i]*self.dr)
+            if q == 'cmass':
+                liness.set_ydata(np.cumsum(self.lam_ss[:,inds][:,::skip][:,i]*self.dr))
             ax.set_title('t = %.2e viscous times' % (t/self.tvisc))
             fig.canvas.draw()
 
@@ -288,7 +330,7 @@ class Sim(Parameters):
         axes[0,0].semilogx(self.t,self.at,'.-')
 
         if scale:
-            dat = self.vs / (-1.5*self.nu(self.at)/self.at)
+            dat = self.vs / self.vp_visc
             vlabel = '$\\dot{a}/v_r^{visc}$'
         else:
             dat = self.vs
@@ -326,9 +368,10 @@ class Sim(Parameters):
         axes[0,1].set_yscale('log')
 
 
-        axes[0,2].plot(self.B,self.A,'.-')
+        axes[0,2].plot(self.B,self.A/np.sqrt(self.at),'.-')
+        axes[0,2].plot(self.B,self.Ap/np.sqrt(self.at),'+r')
         axes[1,2].set_xlabel('$B$',fontsize=20)
-        axes[0,2].set_ylabel('$A$',fontsize=20)
+        axes[0,2].set_ylabel('$A/\\sqrt{a}$',fontsize=20)
 
 
         add_line = lambda ax,val,orient,c,w: ax.axhline(val,color=c,linewidth=w) if orient == 'y' else ax.axvline(val,color=c,linewidth=w)
@@ -348,8 +391,8 @@ class Sim(Parameters):
 
         lowx, highx = axes[1,0].get_xlim()
         lowy, highy = axes[1,0].get_ylim()
-        if lowy <= self.ri <= highy:
-            add_line(axes[1,0],1,'y','k',2)
+        if lowy <= 1 <= highy:
+            add_line(axes[1,0],1l,'y','k',2)
 
         lowx, highx = axes[1,1].get_xlim()
         lowy, highy = axes[1,1].get_ylim()
@@ -360,13 +403,15 @@ class Sim(Parameters):
 
         lowx, highx = axes[1,2].get_xlim()
         lowy, highy = axes[1,2].get_ylim()
-        if lowy <= self.ri <= highy:
-            add_line(axes[1,2],self.ri,'y','k',2)
+        if lowy <= 1 <= highy:
+            add_line(axes[1,2],1,'y','k',2)
+        if lowx <= 1 <= highx:
+            add_line(axes[1,2],1,'x','k',2)
 
         lowx, highx = axes[0,2].get_xlim()
         lowy, highy = axes[0,2].get_ylim()
-        if lowy <= self.ri <= highy:
-            add_line(axes[0,2],self.ri,'y','k',2)
+        if lowx <= 1 <= highx:
+            add_line(axes[0,2],1,'x','k',2)
 
         for ax in axes.flatten():
             ax.minorticks_on()
